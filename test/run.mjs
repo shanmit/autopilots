@@ -443,8 +443,28 @@ try {
   }
   let oldUrl;
   let silentUrl;
+  // Deterministic Web Share behavior: never open the OS share sheet in tests.
+  await evaluate(`(() => {
+    window.__shareTest = {supported:false, mode:'success', calls:[], checked:[]};
+    window.__originalUA = navigator.userAgent;
+    Object.defineProperty(navigator,'userAgent',{configurable:true,value:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'});
+    Object.defineProperty(navigator,'canShare',{configurable:true,value: data => {
+      __shareTest.checked.push(data.files[0]); return __shareTest.supported;
+    }});
+    Object.defineProperty(navigator,'share',{configurable:true,value: async data => {
+      __shareTest.calls.push(data);
+      if (__shareTest.mode==='cancel') throw new DOMException('Test cancellation','AbortError');
+      if (__shareTest.mode==='reject') throw new DOMException('Test rejection','NotAllowedError');
+    }});
+  })()`);
   await test('3-photo real export: nonempty, 720×1280 decode, distinct moving frames, ~15s wall-clock', async () => {
     oldUrl = await verifyExport(3);
+  });
+  await test('unsupported file sharing hides Share and shows iPhone Files guidance', async () => {
+    assert.equal(await evaluate("document.getElementById('share-video').hidden"), true);
+    assert.equal(await evaluate("!document.getElementById('share-guidance').hidden && /Files.*Photos.*TikTok/.test(document.getElementById('share-guidance').textContent)"), true);
+    assert.equal(await evaluate("__shareTest.calls.length"), 0);
+    await evaluate("__shareTest.supported=true");
   });
   await test('4-photo re-generation updates timing, defaults, and revokes the first export', async () => {
     await goStep(2); await upload(3, '__syntheticPhotos[3]');
@@ -454,6 +474,42 @@ try {
     assert.equal(await evaluate(`__test.revoked.includes(${JSON.stringify(oldUrl)})`), true);
     assert.ok((await evaluate("document.getElementById('timeline-note').textContent")).includes('4 photos × 3 seconds'));
     oldUrl = await verifyExport(4);
+  });
+  await test('supported file sharing shows Share and sends the real export File', async () => {
+    assert.equal(await evaluate("document.getElementById('share-video').hidden"), false);
+    assert.equal(await evaluate("document.getElementById('share-guidance').hidden"), true);
+    await click('share-video');
+    await until("!document.getElementById('share-video').disabled");
+    assert.equal(await evaluate(`(async () => {
+      const data=__shareTest.calls.at(-1), file=data.files[0];
+      const exported=__test.urls.find(x=>x.url===document.getElementById('download').href);
+      const a=new Uint8Array(await file.arrayBuffer()),b=new Uint8Array(await exported.blob.arrayBuffer());
+      return file instanceof File && data.files.length===1 && file===__shareTest.checked.at(-1) &&
+        file.name===document.getElementById('download').download && file.type===exported.type &&
+        a.length===b.length && a.every((value,i)=>value===b[i]) && !!data.title && !!data.text;
+    })()`), true);
+  });
+  await test('cancelled share is silent and leaves editor and download usable', async () => {
+    const href=await evaluate("document.getElementById('download').href");
+    await evaluate("__shareTest.mode='cancel'");
+    await click('share-video');
+    await until("!document.getElementById('share-video').disabled");
+    assert.equal(await evaluate("document.getElementById('error').textContent"), '');
+    assert.equal(await evaluate("!document.getElementById('editor').disabled && !document.getElementById('result').hidden"), true);
+    assert.equal(await evaluate("document.getElementById('download').href"), href);
+  });
+  await test('share rejection points to Download and allows retry', async () => {
+    const href=await evaluate("document.getElementById('download').href");
+    await evaluate("__shareTest.mode='reject'");
+    await click('share-video');
+    await until("!document.getElementById('share-video').disabled");
+    assert.equal(await evaluate("document.getElementById('error').textContent"), 'Could not share this video. Use Download video to save it instead.');
+    assert.equal(await evaluate("document.getElementById('download').href"), href);
+    await evaluate("__shareTest.mode='success'");
+    await click('share-video');
+    await until("!document.getElementById('share-video').disabled");
+    assert.equal(await evaluate("document.getElementById('error').textContent"), '');
+    await evaluate("__shareTest.supported=false;Object.defineProperty(navigator,'userAgent',{configurable:true,value:__originalUA})");
   });
   await test('5-photo real export supports the fifth editable caption and exact 15s timeline', async () => {
     await goStep(2); await upload(4, '__syntheticPhotos[4]');
@@ -465,6 +521,7 @@ try {
     assert.equal(await evaluate(`__test.revoked.includes(${JSON.stringify(oldUrl)})`), true);
     assert.ok((await evaluate("document.getElementById('timeline-note').textContent")).includes('5 photos × 2.4 seconds'));
     silentUrl = await verifyExport(5);
+    assert.equal(await evaluate("document.getElementById('share-video').hidden && document.getElementById('share-guidance').hidden"), true);
   });
   await test('a missing required slot is blocked even with enough optional photos', async () => {
     await goStep(2);

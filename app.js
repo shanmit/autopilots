@@ -74,6 +74,7 @@
   let previewFrame = 0;
   let recordingJob = null;
   let exportUrl = null;
+  let shareFile = null;
   let mimeType = '';
   let previewSeconds = 0;
   let audioCtx = null;
@@ -116,12 +117,51 @@
   function activePhotos() { return photos.filter(Boolean); }
   function invalidateExport() {
     $('result').hidden = true;
+    shareFile = null;
+    $('share-video').hidden = true;
+    $('share-video').disabled = false;
+    $('share-guidance').hidden = true;
     $('exported-video').pause();
     $('exported-video').removeAttribute('src');
     $('exported-video').load();
     $('download').removeAttribute('href');
     if (exportUrl) URL.revokeObjectURL(exportUrl);
     exportUrl = null;
+  }
+  function prepareShare(blob, filename) {
+    shareFile = null;
+    let supported = false;
+    try {
+      const file = new File([blob], filename, { type: blob.type });
+      supported = typeof navigator.share === 'function' &&
+        typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+      if (supported) shareFile = file;
+    } catch { /* Keep Download available if file sharing cannot be checked. */ }
+    $('share-video').hidden = !supported;
+    $('share-video').disabled = false;
+    const iphoneFallback = !supported && /iPhone/i.test(navigator.userAgent);
+    $('share-guidance').hidden = !iphoneFallback;
+    $('share-guidance').textContent = iphoneFallback
+      ? (blob.type.startsWith('video/mp4')
+        ? 'On iPhone, tap Download video, then open the download in Files and use Share → Save Video to save it to Photos. Open TikTok and upload it from Photos.'
+        : 'This browser exported WebM. Use a browser that supports MP4 export to save a video to Photos for TikTok.')
+      : '';
+  }
+  async function shareVideo() {
+    const file = shareFile;
+    if (!file || $('share-video').disabled) return;
+    clearError();
+    $('share-video').disabled = true;
+    try {
+      // Invoke directly in the click handler to preserve user activation.
+      await navigator.share({ files: [file], title: 'Restaurant promotion', text: 'My restaurant promotion video' });
+    } catch (err) {
+      if (shareFile === file && err?.name !== 'AbortError') {
+        error('Could not share this video. Use Download video to save it instead.');
+      }
+    } finally {
+      if (shareFile === file) $('share-video').disabled = false;
+    }
   }
   function validateBrief() {
     for (const [id, name] of [['restaurantName', 'Restaurant Name'], ['offer', 'Offer / Details'], ['cta', 'Call to Action'], ['objective', 'Objective']]) {
@@ -825,6 +865,7 @@
     $('exported-video').src = exportUrl;
     $('download').href = exportUrl;
     $('download').download = `autopilots-promotion.${extension}`;
+    prepareShare(blob, $('download').download);
     $('format-note').textContent = `${extension.toUpperCase()} video (${actualType}) · 720 × 1280 · ${job.withMusic ? 'with soundtrack' : 'silent'}. ${extension === 'webm' ? 'WebM fallback: sharing-platform support varies. WebM may not report duration until playback or seeking.' : 'MP4 file ready to download.'}`;
     $('result').hidden = false;
     status(`Video ready. Recorded ${((job.stoppedAt - job.startedAt) / 1000).toFixed(1)} seconds. Download your ${extension.toUpperCase()} file below.`);
@@ -954,6 +995,7 @@
     if (currentStep < 3) { event.preventDefault(); navigate(currentStep + 1); }
     else generate(event);
   });
+  $('share-video').addEventListener('click', shareVideo);
   $('cancel').addEventListener('click', () => stopRecording('cancel'));
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
