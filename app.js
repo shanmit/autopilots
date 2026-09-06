@@ -1,5 +1,13 @@
 'use strict';
 
+// Pure, conservative hints: retain exact matched substrings, never invent offer details.
+function parseOfferHints(offer) {
+  const text = typeof offer === 'string' ? offer : '';
+  const numberToken = text.match(/(?<![\p{L}\p{N}.,])(?:\d+(?:\.\d+)?%|[$£€]\s?\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+\s+for\s+\d+|BOGO)(?![\p{L}\p{N}]|[.,]\d)/iu)?.[0] || null;
+  const timeWindow = text.match(/\b(?:(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)s?(?:\s+until\s+(?:1[0-2]|[1-9])(?::[0-5]\d)?\s?(?:am|pm)(?:\s+tonight)?)?|until\s+(?:1[0-2]|[1-9])(?::[0-5]\d)?\s?(?:am|pm)(?:\s+tonight)?|tonight|today\s+only|this\s+weekend|happy\s+hour)\b/i)?.[0] || null;
+  return { numberToken, timeWindow, urgent: /\b(?:today|tonight|last|limited|ends|only|final|now)\b/i.test(text) };
+}
+
 (() => {
   const OBJECTIVES = {
     'obj-offer': {
@@ -39,11 +47,21 @@
       captions: ['{offer} for your first visit', 'Welcome to {restaurantName}', 'Claim your first-visit deal']
     }
   };
-  const MOTIONS = {
-    3: ['zoom-in', 'pan-right', 'zoom-out'],
-    4: ['zoom-in', 'pan-left', 'zoom-out', 'pan-right'],
-    5: ['zoom-in', 'pan-up', 'zoom-out', 'pan-down', 'pan-right']
+  const MOTION_PROFILES = {
+    urgent: { zoom: .22, panZoom: .18, motions: {
+      3: ['zoom-in', 'pan-right', 'zoom-out'],
+      4: ['zoom-in', 'pan-left', 'zoom-out', 'pan-right'],
+      5: ['zoom-in', 'pan-up', 'zoom-out', 'pan-down', 'pan-right']
+    } },
+    calm: { zoom: .08, panZoom: .06, motions: {
+      3: ['zoom-in', 'pan-left', 'zoom-out'],
+      4: ['zoom-in', 'pan-right', 'zoom-out', 'pan-left'],
+      5: ['zoom-in', 'pan-down', 'zoom-out', 'pan-up', 'pan-left']
+    } }
   };
+  function currentProfile() {
+    return parseOfferHints($('offer').value).urgent || $('objective').value === 'obj-offer' ? 'urgent' : 'calm';
+  }
   const MIME_CANDIDATES = [
     'video/mp4;codecs=avc1.42E01E', 'video/mp4',
     'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'
@@ -167,7 +185,7 @@
       sceneCaptions: photos.map((photo, slot) => {
         if (!photo) return null;
         const template = templates[scene++];
-        return captionEdits[slot] ?? defaultCaption(template);
+        return captionEdits[slot] ?? sceneDefault(template, scene - 1);
       }),
       captionEdits: [...captionEdits], endCaption: $('end-caption').value,
       endEdited: !!$('end-caption').dataset.edited, music: musicChoice(), audio: userAudio?.file || null };
@@ -515,12 +533,17 @@
     }
     return 'Visit us today';
   }
+  function sceneDefault(template, sceneIndex) {
+    const window = parseOfferHints($('offer').value).timeWindow;
+    if (sceneIndex === 1 && window) return (window[0].toUpperCase() + window.slice(1)).slice(0, 40);
+    return defaultCaption(template);
+  }
   function buildReview() {
     const count = activePhotos().length;
     const templates = [...OBJECTIVES[$('objective').value].captions, '{restaurantName}', '{offer}'];
     const duration = 12 / count;
     const slotIndices = photos.flatMap((photo, index) => photo ? [index] : []);
-    sceneCaptions = slotIndices.map((slotIndex, sceneIndex) => captionEdits[slotIndex] ?? defaultCaption(templates[sceneIndex]));
+    sceneCaptions = slotIndices.map((slotIndex, sceneIndex) => captionEdits[slotIndex] ?? sceneDefault(templates[sceneIndex], sceneIndex));
     $('timeline-note').textContent = `${count} photos × ${duration} seconds + 3-second CTA. Half-second crossfades are included within the 15 seconds.`;
     $('captions').replaceChildren();
     sceneCaptions.forEach((caption, index) => {
@@ -528,7 +551,7 @@
       const id = `caption-${index + 1}`;
       const label = element('label', `Scene ${index + 1}`);
       label.htmlFor = id;
-      label.append(element('span', `${duration}s · ${MOTIONS[count][index]}`));
+      label.append(element('span', `${duration}s · ${MOTION_PROFILES[currentProfile()].motions[count][index]}`));
       const input = element('input');
       input.id = id;
       input.maxLength = 40;
@@ -909,7 +932,7 @@
   }
   function drawText(context, text, centerY, size = 56, color = '#ffffff', options = {}) {
     context.save();
-    context.font = `800 ${size}px system-ui, sans-serif`;
+    context.font = `${options.weight || 800} ${size}px system-ui, sans-serif`;
     // letterSpacing must be set BEFORE measuring so wrapping stays within 608px.
     if ('letterSpacing' in context) context.letterSpacing = options.letterSpacing ?? (size >= 48 ? '-1px' : '0px');
     context.textAlign = 'center';
@@ -938,6 +961,33 @@
     lines.forEach((line, index) => context.fillText(line, 360, centerY + (index - (lines.length - 1) / 2) * lineHeight));
     context.restore();
   }
+  function drawOfferLockup(context, caption, token) {
+    // Never reintroduce an offer that the owner removed from the caption.
+    const captionToken = parseOfferHints(caption).numberToken;
+    if (!token || !captionToken || captionToken.toLowerCase() !== token.toLowerCase()) return false;
+    const offset = caption.toLowerCase().indexOf(captionToken.toLowerCase());
+    const rest = (caption.slice(0, offset) + caption.slice(offset + captionToken.length)).trim();
+    context.save();
+    let numberSize = 96;
+    let textSize, numberHeight, textHeight;
+    // Keep the entire lockup within the existing lower scrim and 56px side margins.
+    for (;;) {
+      textSize = numberSize * 56 / 96;
+      context.font = `900 ${numberSize}px system-ui, sans-serif`;
+      if ('letterSpacing' in context) context.letterSpacing = '-1px';
+      const numberWidth = context.measureText(captionToken).width;
+      numberHeight = numberSize * 1.25;
+      context.font = `800 ${textSize}px system-ui, sans-serif`;
+      textHeight = wrappedLines(context, rest, 608).length * textSize * 1.25;
+      if (numberWidth <= 608 && numberHeight + textHeight + 16 <= 300) break;
+      numberSize *= .9;
+    }
+    const top = 900 + (300 - numberHeight - textHeight - 16) / 2;
+    context.restore();
+    drawText(context, captionToken, top + numberHeight / 2, numberSize, '#ffffff', { weight: 900, letterSpacing: '-1px' });
+    drawText(context, rest, top + numberHeight + 16 + textHeight / 2, textSize, '#ffffff', { letterSpacing: '-1px' });
+    return true;
+  }
   // Fade + rise later captions; the opening hook is visible immediately.
   function entrance(seconds, start, window = 0.45) {
     return easeInOutSine(Math.min(1, Math.max(0, (seconds - start) / window)));
@@ -963,14 +1013,17 @@
       return;
     }
     const duration = 12 / list.length;
-    const progress = easeInOutSine(Math.min(1, Math.max(0, (seconds - sceneIndex * duration + (sceneIndex ? .5 : 0)) / (duration + (sceneIndex ? .5 : 0)))));
+    const profileName = currentProfile();
+    const profile = MOTION_PROFILES[profileName];
+    const phase = Math.min(1, Math.max(0, (seconds - sceneIndex * duration + (sceneIndex ? .5 : 0)) / (duration + (sceneIndex ? .5 : 0))));
+    const progress = profileName === 'urgent' ? 1 - Math.pow(1 - phase, 3) : easeInOutSine(phase);
     const image = list[sceneIndex].bitmap;
-    const motion = MOTIONS[list.length][sceneIndex];
-    let zoom = 1.13;
+    const motion = profile.motions[list.length][sceneIndex];
+    let zoom = 1 + profile.panZoom;
     let x = .5;
     let y = .5;
-    if (motion === 'zoom-in') zoom = 1 + .15 * progress;
-    if (motion === 'zoom-out') zoom = 1.15 - .15 * progress;
+    if (motion === 'zoom-in') zoom = 1 + profile.zoom * progress;
+    if (motion === 'zoom-out') zoom = 1 + profile.zoom * (1 - progress);
     if (motion === 'pan-right') x = 1 - progress;
     if (motion === 'pan-left') x = progress;
     if (motion === 'pan-up') y = progress;
@@ -992,6 +1045,7 @@
     scrim.addColorStop(1, 'rgba(0,0,0,.58)');
     context.fillStyle = scrim;
     context.fillRect(0, 880, 720, 400);
+    if (sceneIndex === 0 && drawOfferLockup(context, sceneCaptions[0] || '', parseOfferHints($('offer').value).numberToken)) return;
     const enter = sceneIndex === 0 ? 1 : entrance(seconds, sceneIndex * duration);
     drawText(context, sceneCaptions[sceneIndex] || '', 1050 + (1 - enter) * 24, 56, '#ffffff', { alpha: enter });
   }

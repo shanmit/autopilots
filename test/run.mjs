@@ -155,6 +155,25 @@ try {
   await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   await call('Page.navigate', { url: pathToFileURL(path.join(root, 'index.html')).href });
   await until("document.readyState==='complete' && document.querySelectorAll('#photo-slots input').length===5");
+  await test('offer parser conservatively captures exact number, time and urgency hints', async () => {
+    const cases = [
+      ['50% off','50%',null,false], ['$5 pints','$5',null,false], ['£10 lunch','£10',null,false],
+      ['2 for 1','2 for 1',null,false], ['bOgO tonight','bOgO','tonight',true],
+      ['Tuesdays until 6pm',null,'Tuesdays until 6pm',false],
+      ['£10 until 6pm tonight','£10','until 6pm tonight',true],
+      ['TODAY ONLY',null,'TODAY ONLY',true], ['this weekend',null,'this weekend',false],
+      ['happy hour',null,'happy hour',false], ['Friday',null,'Friday',false],
+      ['Final tables now',null,null,true], ['12.5% off this weekend','12.5%','this weekend',false],
+      ['$5.50 pints','$5.50',null,false],
+      ['fresh pasta',null,null,false], ['family favourites',null,null,false],
+      ['stone-baked pizza',null,null,false], ['lastingly memorable',null,null,false],
+      ['BOGOlicious and £10ish',null,null,false], ['2 for 1st place',null,null,false],
+      ['until 66pm',null,null,false]
+    ];
+    for(const [offer,numberToken,timeWindow,urgent] of cases) {
+      assert.deepEqual(await evaluate(`parseOfferHints(${JSON.stringify(offer)})`),{numberToken,timeWindow,urgent},offer);
+    }
+  });
   await test('file:// app loads with a supported recorder and local stylesheet', async () => {
     assert.equal(await evaluate("document.styleSheets.length===1 && !document.getElementById('generate').disabled"), true);
   });
@@ -349,6 +368,49 @@ try {
     console.log('  First-frame caption pixels: ' + JSON.stringify(metrics));
     await fill('caption-1', original); await fill('preview-time', '0');
   });
+  const previewPixels = () => evaluate("(() => {const sample=document.createElement('canvas');sample.width=180;sample.height=320;const context=sample.getContext('2d');context.drawImage(document.getElementById('preview'),0,0,180,320);return Array.from(context.getImageData(0,0,180,320).data);})()");
+  async function firstFrameFor(offer, objectiveId='obj-new', caption='Same owner caption', seconds=0) {
+    await goStep(1);await fill('offer',offer);await objective(objectiveId);await goStep(3);
+    await fill('caption-1',caption);await fill('preview-time',String(seconds));
+    return previewPixels();
+  }
+  const pixelDistance = (a,b,start=0,end=a.length) => {
+    let sum=0,count=0;for(let i=start;i<end;i++){if(i%4!==3){sum+=Math.abs(a[i]-b[i]);count++;}}
+    return sum/count;
+  };
+  await test('number-token offers visibly change the opening lockup, not just token substitution', async () => {
+    const withNumber=await firstFrameFor('50% off','obj-new','50% off at Cafe');
+    const withoutNumber=await firstFrameFor('seasonal menu','obj-new','50% off at Cafe');
+    // Identical caption and photo: only offer-driven lockup formatting can change these pixels.
+    const distance=pixelDistance(withNumber,withoutNumber,220*180*4,308*180*4);
+    assert.ok(distance>3, `number lockup did not change opening pixels: ${distance}`);
+    console.log('  Number-lockup pixel distance: '+distance.toFixed(3));
+  });
+  await test('urgent and calm profiles change motion at the same timestamp', async () => {
+    const urgent=await firstFrameFor('seasonal menu','obj-offer','Same owner caption',1.2);
+    const calm=await firstFrameFor('seasonal menu','obj-quiet','Same owner caption',1.2);
+    const distance=pixelDistance(urgent,calm,0,200*180*4);
+    assert.ok(distance>1, `motion profiles are indistinguishable: ${distance}`);
+    console.log('  Urgent/calm motion pixel distance: '+distance.toFixed(3));
+  });
+  await test('time-window defaults update scene 2 but never overwrite an owner edit', async () => {
+    await goStep(1);await fill('offer','$5 until 6pm tonight');await objective('obj-offer');await goStep(3);
+    assert.equal(await evaluate("document.getElementById('caption-2').value"),'Until 6pm tonight');
+    await fill('caption-2','My exact second caption');
+    await goStep(1);await fill('offer','£10 this weekend');await goStep(3);
+    assert.equal(await evaluate("document.getElementById('caption-2').value"),'My exact second caption');
+    await fill('caption-2','');await goStep(1);await fill('offer','BOGO happy hour');await goStep(3);
+    assert.equal(await evaluate("document.getElementById('caption-2').value"),'');
+  });
+  await test('identical input and timestamp produce identical rendered pixels', async () => {
+    const first=await firstFrameFor('$5 pints tonight','obj-new','$5 pints tonight',1.2);
+    await fill('preview-time','0');await fill('preview-time','1.2');
+    const again=await previewPixels();
+    assert.equal(pixelDistance(first,again),0);
+    // Restore the existing suite's fixture and hand edits.
+    await goStep(1);await fill('offer','test tasting menu');await objective('obj-offer');await goStep(3);
+    await fill('caption-1','SYNTHETIC TEST IMAGE 1');await fill('caption-2','SYNTHETIC TEST IMAGE 2');
+  });
   await test('responsive layout and associated control labels at 320–1280px', async () => {
     for (const width of [320, 480, 768, 1280]) {
       await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -442,10 +504,15 @@ try {
     })()`);
   }
   async function verifyExport(count, { audioTracks = 0 } = {}) {
-    const expectedMotions = {
+    const urgent = await evaluate("document.getElementById('objective').value==='obj-offer' || parseOfferHints(document.getElementById('offer').value).urgent");
+    const expectedMotions = urgent ? {
       3: ['zoom-in', 'pan-right', 'zoom-out'],
       4: ['zoom-in', 'pan-left', 'zoom-out', 'pan-right'],
       5: ['zoom-in', 'pan-up', 'zoom-out', 'pan-down', 'pan-right']
+    } : {
+      3: ['zoom-in', 'pan-left', 'zoom-out'],
+      4: ['zoom-in', 'pan-right', 'zoom-out', 'pan-left'],
+      5: ['zoom-in', 'pan-down', 'zoom-out', 'pan-up', 'pan-left']
     };
     const labels = await evaluate("[...document.querySelectorAll('#captions label span')].map(n=>n.textContent)");
     assert.deepEqual(labels, expectedMotions[count].map(motion => `${12 / count}s · ${motion}`));

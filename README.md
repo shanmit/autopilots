@@ -42,6 +42,20 @@ Default captions lead with the owner's offer in scene 1 for every objective. If 
 
 Scene captions remain editable with a 40-character limit; the owner's final CTA retains its 25-character limit. These defaults implement the requested conversion structure; conversion lift has not been measured.
 
+**The offer shapes the film:** A pure, case-insensitive parser extracts the first conservative number token (percentage, $/£/€ amount, numeric multi-buy such as `2 for 1`, or `BOGO`), a time window, and whole-word urgency cues. Matched substrings retain their spelling; unrelated numbers or partial words are not interpreted as offers. No match is a normal path. Examples:
+
+| Offer | Number token | Time window | Urgency |
+| --- | --- | --- | --- |
+| `50% off` | `50%` | none | no |
+| `$5 pints tonight` | `$5` | `tonight` | yes |
+| `2 for 1` | `2 for 1` | none | no |
+| `Tuesdays until 6pm` | none | `Tuesdays until 6pm` | no |
+| `fresh pasta` | none | none | no |
+
+A number token still present in scene 1's caption gets its own larger, weight-900 line, with the rest of the caption beneath it. The lockup fits within x=56–664 and y=900–1200; long text scales down and wraps within that area. Normal and maximum-length captions were visually checked in Chrome. If there is no token, or the owner removed it from the caption, the existing caption layout is used. A matched time window becomes the unedited scene-2 default (for example, `Until 6pm tonight`); manual edits, including blank captions, remain untouched when the offer changes.
+
+Motion is urgent when the offer contains a whole-word urgency cue (`today`, `tonight`, `last`, `limited`, `ends`, `only`, `final`, `now`) or the objective is Special Offer. Otherwise it is calm, including Quiet Hours without an urgency cue. Urgency takes precedence if a Quiet Hours offer contains one of those words. The parser and rendering use no randomness, network, dependencies, or AI. Identical inputs at the same timestamp produce identical rendered pixels in the tested browser; real-time MediaRecorder timing and encoded byte counts can still vary between runs.
+
 The previous AutoPilots landing page is preserved as `landing.html`, with its styles retained in `styles.css`.
 
 ## Run the real browser tests
@@ -60,6 +74,7 @@ The harness drives the actual app through Chrome DevTools Protocol and native in
 
 - Required brief fields and objective; fewer than three photos; missing required slots even when optional photos are present.
 - Exact invalid-type and oversized-file errors, the 5MB boundary, corrupt images, and successful JPEG/PNG/WebP decoding.
+- Parser cases include percentages, currency, multi-buy, combined weekday/time windows, urgency, and no-match/partial-word inputs. Pixel checks isolate numeric-lockup formatting with identical caption text, urgent versus calm motion, and exact repeatability; time-window changes preserve hand-edited scene 2.
 - Every objective leads with the offer, including a 40-character offer; a pixel comparison confirms the opening caption is opaque at t=0 and matches the settled caption position at t=0.5.
 - All objective-specific slots and default captions; scene/CTA length enforcement; literal handling of markup-like user text.
 - At 390×844, preview-before-captions visual order, at least 44×44 CSS-pixel control targets, and unchanged photo-slot/preview height after upload and removal.
@@ -83,36 +98,36 @@ Every check prints PASS or the failing assertion. The process exits nonzero on f
 The completed run in Chrome 152.0.7977.76 reported:
 
 ```text
-PASS: 44/44 tests; 7 complete real-time video exports (3 with soundtrack audio); zero external network requests; zero browser errors.
+PASS: 49/49 tests; 7 complete real-time video exports (3 with soundtrack audio); zero external network requests; zero browser errors.
 ```
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 8,583,284 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.003s | 6 |
-| 4 | none | 8,263,489 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.014s | 6 |
-| 5 | none | 8,462,239 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.013s | 7 |
-| 5 | Sunny (built-in) | 8,643,570 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 14.997s | 7 |
-| 5 | Uploaded 4s WAV | 8,637,428 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 15.014s | 7 |
-| 5 | Uploaded WAV, restored session | 8,593,901 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.007s | 7 |
-| 3 | none, IndexedDB blocked | 8,571,651 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.010s | 6 |
+| 3 | none | 8,241,836 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.005s | 6 |
+| 4 | none | 8,098,937 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.001s | 7 |
+| 5 | none | 8,376,778 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.003s | 15.018s | 6 |
+| 5 | Sunny (built-in) | 8,544,015 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 14.998s | 6 |
+| 5 | Uploaded 4s WAV | 8,570,682 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.016s | 6 |
+| 5 | Uploaded WAV, restored session | 8,611,695 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.012s | 6 |
+| 3 | none, IndexedDB blocked | 8,208,102 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.008s | 6 |
 
 All seven downloaded files decoded at 720 × 1280, had `.mp4` extensions, and contained an `ftyp` signature. The table reports recorder MIME at startup; final blob MIME was `video/mp4;codecs=avc1.42001f` for silent exports and `video/mp4;codecs=avc1.42001f,mp4a.40.2` for all three soundtrack exports. All three soundtrack files contained `mp4a` and `esds` markers, with no Opus in their recorder MIME.
 
-The Sunny export's decoded audio ran 14.976s with mid RMS 0.1784 (1–13s) falling to tail RMS 0.01843 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.976s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All four silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; all 6,839 matched the settled caption positions. At 390×844, the measured photo slot stayed 554.734375px tall before and after upload, with its preview area unchanged at 203.859375px. File sizes and precise frame timings vary between runs.
+The Sunny export's decoded audio ran 14.954s with mid RMS 0.1784 (1–13s) falling to tail RMS 0.02131 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.997s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All four silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; 6,838 matched the settled caption positions. The isolated numeric-lockup comparison measured a mean RGB pixel distance of 16.233; urgent versus calm motion measured 18.197. Repeating the same input and timestamp produced a pixel distance of exactly zero. At 390×844, the measured photo slot stayed 554.734375px tall before and after upload, with its preview area unchanged at 203.859375px. File sizes and precise frame timings vary between runs.
 
 ## Rendering and timing
 
-The output canvas is 720 × 1280 and uses `captureStream(30)`. Photos fill the frame with center-based cropping and the prescribed camera motions:
+The output canvas is 720 × 1280 and uses `captureStream(30)`. Photos fill the frame with center-based cropping and the profile-dependent camera motions:
 
-| Photos | Scene lengths | Motions | End card |
-| --- | --- | --- | --- |
-| 3 | 4s each | zoom-in, pan-right, zoom-out | 3s |
-| 4 | 3s each | zoom-in, pan-left, zoom-out, pan-right | 3s |
-| 5 | 2.4s each | zoom-in, pan-up, zoom-out, pan-down, pan-right | 3s |
+| Photos | Scene lengths | Urgent motions | Calm motions | End card |
+| --- | --- | --- | --- | --- |
+| 3 | 4s each | zoom-in, pan-right, zoom-out | zoom-in, pan-left, zoom-out | 3s |
+| 4 | 3s each | zoom-in, pan-left, zoom-out, pan-right | zoom-in, pan-right, zoom-out, pan-left | 3s |
+| 5 | 2.4s each | zoom-in, pan-up, zoom-out, pan-down, pan-right | zoom-in, pan-down, zoom-out, pan-up, pan-left | 3s |
 
-Camera motions are eased (sine ease-in-out) rather than linear, so each scene accelerates gently from rest and settles before the transition. Every photo frame gets a pre-rendered corner vignette (up to 28% darkening) and a very light warm color cast to unify mixed-quality photos. Captions are drawn at weight 800 with a soft drop shadow (with slight negative letter-spacing on browsers supporting canvas `letterSpacing`, applied before text measurement so wrapping is unchanged) and are fully visible immediately in scene 1; later scenes fade in with a small rise over their first 0.45 seconds; a soft graduated scrim over roughly the bottom 400px supports contrast without covering half the photo. The CTA end card draws the first (hero) photo blurred and darkened — pre-rendered once, drifting with a slow 4% eased zoom over its 3 seconds — with the restaurant name as a tracked-out uppercase lockup and the CTA text on a solid rounded terracotta backdrop. Text and backdrop share the same fade and rise over the card's first half second. The backdrop stays within the 56px horizontal margins; text wraps within 544px with padding, centered below the restaurant-name lockup. Normal text and maximum-length name/CTA strings were visually checked in Chrome without overlap or clipping. The button appearance is burned into the video, not an interactive link.
+Urgent motion uses cubic ease-out for quicker settling, a 22% zoom range, and 18% extra crop for pans. Calm motion uses sine ease-in-out, an 8% zoom range, and 6% extra crop for pans. Only motion character and directions vary: per-count scene durations and half-second crossfades are unchanged. Every photo frame gets a pre-rendered corner vignette (up to 28% darkening) and a very light warm color cast to unify mixed-quality photos. Captions are drawn at weight 800 with a soft drop shadow (with slight negative letter-spacing on browsers supporting canvas `letterSpacing`, applied before text measurement so wrapping is unchanged) and are fully visible immediately in scene 1; later scenes fade in with a small rise over their first 0.45 seconds; a soft graduated scrim over roughly the bottom 400px supports contrast without covering half the photo. The CTA end card draws the first (hero) photo blurred and darkened — pre-rendered once, drifting with a slow 4% eased zoom over its 3 seconds — with the restaurant name as a tracked-out uppercase lockup and the CTA text on a solid rounded terracotta backdrop. Text and backdrop share the same fade and rise over the card's first half second. The backdrop stays within the 56px horizontal margins; text wraps within 544px with padding, centered below the restaurant-name lockup. Normal text and maximum-length name/CTA strings were visually checked in Chrome without overlap or clipping. The button appearance is burned into the video, not an interactive link.
 
-Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. Video is recorded with a requested bitrate of 6.5 Mbps, preferring H.264 (plus 128 kbps AAC when a soundtrack is chosen). The verified 15-second MP4 exports were approximately 8.2–8.6MB; actual bitrate and size depend on the encoder and content.
+Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. Video is recorded with a requested bitrate of 6.5 Mbps, preferring H.264 (plus 128 kbps AAC when a soundtrack is chosen). The verified 15-second MP4 exports were approximately 8.1–8.6MB; actual bitrate and size depend on the encoder and content.
 
 **Duration metadata depends on the container.** All seven MP4 exports in the verified run reported finite duration immediately. WebM fallback exports may initially report `Infinity`. The tests independently measure `performance.now()` immediately around the real recorder's `start()` and `stop()` calls. When duration is nonfinite, they seek the decoded video to its end to discover the media endpoint. For every export, they seek to eight timestamps and sample decoded pixels. They do not substitute a declared duration for recording or playback evidence. Encoded endpoints can differ from the 15-second schedule by a frame because real-time capture and encoding are browser-scheduled.
 
