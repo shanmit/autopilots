@@ -627,6 +627,45 @@
     } finally { pendingUploads--; }
   }
 
+  function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
+  // One 720×1280 vignette built once at startup; drawn per frame with a single drawImage.
+  const vignette = document.createElement('canvas');
+  vignette.width = 720;
+  vignette.height = 1280;
+  {
+    const vctx = vignette.getContext('2d');
+    const gradient = vctx.createRadialGradient(360, 640, 340, 360, 640, 900);
+    gradient.addColorStop(0, 'rgba(0,0,0,0)');
+    gradient.addColorStop(1, 'rgba(0,0,0,.28)');
+    vctx.fillStyle = gradient;
+    vctx.fillRect(0, 0, 720, 1280);
+  }
+  // The CTA end card's blurred hero background is pre-rendered once per hero
+  // bitmap (downscale then upscale for a cheap blur) — never per frame.
+  let ctaBg = null;
+  let ctaBgSource = null;
+  function ctaBackground(bitmap) {
+    if (ctaBg && ctaBgSource === bitmap) return ctaBg;
+    const small = document.createElement('canvas');
+    small.width = 90;
+    small.height = 160;
+    const smallCtx = small.getContext('2d');
+    const fit = Math.max(90 / bitmap.width, 160 / bitmap.height);
+    smallCtx.drawImage(bitmap, (90 - bitmap.width * fit) / 2, (160 - bitmap.height * fit) / 2, bitmap.width * fit, bitmap.height * fit);
+    const background = document.createElement('canvas');
+    background.width = 720;
+    background.height = 1280;
+    const bgCtx = background.getContext('2d');
+    bgCtx.imageSmoothingEnabled = true;
+    bgCtx.imageSmoothingQuality = 'high';
+    bgCtx.drawImage(small, 0, 0, 720, 1280);
+    bgCtx.fillStyle = 'rgba(24,22,18,.82)';
+    bgCtx.fillRect(0, 0, 720, 1280);
+    ctaBg = background;
+    ctaBgSource = bitmap;
+    return background;
+  }
+
   // Break long unspaced words as well as ordinary lines; measure actual glyph width.
   function wrappedLines(context, text, maxWidth) {
     const lines = [];
@@ -643,29 +682,49 @@
     if (line) lines.push(line);
     return lines;
   }
-  function drawText(context, text, centerY, size = 56, color = '#ffffff') {
-    context.font = `700 ${size}px system-ui, sans-serif`;
+  function drawText(context, text, centerY, size = 56, color = '#ffffff', options = {}) {
+    context.save();
+    context.font = `800 ${size}px system-ui, sans-serif`;
+    // letterSpacing must be set BEFORE measuring so wrapping stays within 608px.
+    if ('letterSpacing' in context) context.letterSpacing = options.letterSpacing ?? (size >= 48 ? '-1px' : '0px');
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillStyle = color;
+    if (options.alpha !== undefined) context.globalAlpha *= options.alpha;
+    context.shadowColor = 'rgba(0,0,0,.55)';
+    context.shadowBlur = 12;
+    context.shadowOffsetY = 2;
     const lines = wrappedLines(context, text, 608);
     const lineHeight = size * 1.25;
     lines.forEach((line, index) => context.fillText(line, 360, centerY + (index - (lines.length - 1) / 2) * lineHeight));
+    context.restore();
+  }
+  // Fade + rise a caption over the first 0.45s a scene is on screen.
+  function entrance(seconds, start, window = 0.45) {
+    return easeInOutSine(Math.min(1, Math.max(0, (seconds - start) / window)));
   }
   function drawScene(context, sceneIndex, seconds, list) {
     context.fillStyle = '#292824';
     context.fillRect(0, 0, 720, 1280);
     if (sceneIndex >= list.length) {
+      // CTA end card: darkened blurred hero photo with a very slow eased zoom.
+      const drift = 1 + .04 * easeInOutSine(Math.min(1, Math.max(0, (seconds - 12) / 3)));
+      const background = ctaBackground(list[0].bitmap);
+      context.drawImage(background, (720 - 720 * drift) / 2, (1280 - 1280 * drift) / 2, 720 * drift, 1280 * drift);
       context.fillStyle = '#b83b28';
       context.fillRect(0, 0, 720, 18);
+      const enter = entrance(seconds, 12, .5);
+      context.save();
+      context.globalAlpha *= enter;
       context.fillStyle = '#e8b39a';
-      context.fillRect(310, 485, 100, 5);
-      drawText(context, $('restaurantName').value.trim(), 380, 40, '#f3d4bf');
-      drawText(context, $('end-caption').value.trim(), 650, 64);
+      context.fillRect(310, 318, 100, 3);
+      context.restore();
+      drawText(context, $('restaurantName').value.trim().toUpperCase(), 385, 34, '#f3d4bf', { letterSpacing: '6px', alpha: enter });
+      drawText(context, $('end-caption').value.trim(), 660 + (1 - enter) * 24, 68, '#ffffff', { alpha: enter });
       return;
     }
     const duration = 12 / list.length;
-    const progress = Math.min(1, Math.max(0, (seconds - sceneIndex * duration + (sceneIndex ? .5 : 0)) / (duration + (sceneIndex ? .5 : 0))));
+    const progress = easeInOutSine(Math.min(1, Math.max(0, (seconds - sceneIndex * duration + (sceneIndex ? .5 : 0)) / (duration + (sceneIndex ? .5 : 0)))));
     const image = list[sceneIndex].bitmap;
     const motion = MOTIONS[list.length][sceneIndex];
     let zoom = 1.13;
@@ -681,13 +740,21 @@
     const width = image.width * scale;
     const height = image.height * scale;
     context.drawImage(image, (720 - width) * x, (1280 - height) * y, width, height);
-    const scrim = context.createLinearGradient(0, 720, 0, 1280);
+    context.drawImage(vignette, 0, 0);
+    // Barely-there warm cast to unify mixed-quality photos.
+    context.globalCompositeOperation = 'overlay';
+    context.fillStyle = 'rgba(255,180,120,.04)';
+    context.fillRect(0, 0, 720, 1280);
+    context.globalCompositeOperation = 'source-over';
+    const scrim = context.createLinearGradient(0, 880, 0, 1280);
     scrim.addColorStop(0, 'rgba(0,0,0,0)');
-    scrim.addColorStop(.45, 'rgba(0,0,0,.72)');
-    scrim.addColorStop(1, 'rgba(0,0,0,.88)');
+    scrim.addColorStop(.35, 'rgba(0,0,0,.3)');
+    scrim.addColorStop(.7, 'rgba(0,0,0,.5)');
+    scrim.addColorStop(1, 'rgba(0,0,0,.58)');
     context.fillStyle = scrim;
-    context.fillRect(0, 720, 720, 560);
-    drawText(context, sceneCaptions[sceneIndex] || '', 1050);
+    context.fillRect(0, 880, 720, 400);
+    const enter = entrance(seconds, sceneIndex * duration);
+    drawText(context, sceneCaptions[sceneIndex] || '', 1050 + (1 - enter) * 24, 56, '#ffffff', { alpha: enter });
   }
   function render(seconds) {
     const list = activePhotos();
@@ -808,8 +875,8 @@
         if (job.music) job.stream.addTrack(job.music.mediaDest.stream.getAudioTracks()[0]);
       }
       job.recorder = new MediaRecorder(job.stream, withMusic
-        ? { mimeType: audioMimeType, videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 }
-        : { mimeType, videoBitsPerSecond: 4000000 });
+        ? { mimeType: audioMimeType, videoBitsPerSecond: 6500000, audioBitsPerSecond: 128000 }
+        : { mimeType, videoBitsPerSecond: 6500000 });
       job.recorder.ondataavailable = event => { if (event.data.size && !job.finished) job.chunks.push(event.data); };
       job.recorder.onerror = () => stopRecording('The browser could not record this video. Please try again.');
       job.recorder.onstop = () => {

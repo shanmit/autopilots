@@ -54,13 +54,13 @@ PASS: 26/26 tests; 5 complete real-time video exports (2 with soundtrack audio);
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 4,279,649 | `video/webm;codecs=vp9` | 0 | 15.002s | 14.972s | 5 |
-| 4 | none | 4,158,285 | `video/webm;codecs=vp9` | 0 | 15.001s | 14.972s | 6 |
-| 5 | none | 4,707,488 | `video/webm;codecs=vp9` | 0 | 15.001s | 14.972s | 6 |
-| 5 | Sunny (built-in) | 5,001,820 | `video/webm;codecs=vp9,opus` | 1 | 15.002s | 14.962s | 6 |
-| 5 | Uploaded 4s WAV | 4,976,397 | `video/webm;codecs=vp9,opus` | 1 | 15.002s | 14.971s | 6 |
+| 3 | none | 6,828,888 | `video/webm;codecs=vp9` | 0 | 15.002s | 14.984s | 6 |
+| 4 | none | 7,127,860 | `video/webm;codecs=vp9` | 0 | 15.001s | 14.974s | 6 |
+| 5 | none | 7,432,731 | `video/webm;codecs=vp9` | 0 | 15.003s | 14.973s | 7 |
+| 5 | Sunny (built-in) | 7,751,201 | `video/webm;codecs=vp9,opus` | 1 | 15.001s | 14.964s | 7 |
+| 5 | Uploaded 4s WAV | 7,738,091 | `video/webm;codecs=vp9,opus` | 1 | 15.002s | 14.983s | 7 |
 
-All five downloaded files decoded at 720 × 1280 and had `.webm` extensions. The Sunny export's decoded audio ran 14.940s with mid RMS 0.1787 (1–13s) falling to tail RMS 0.01814 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.940s with RMS 0.2941 at both 6s and 13s, proving the 4-second source looped. The three silent exports were rejected by `decodeAudioData`, structurally confirming the absence of any audio track. File sizes and precise frame timings vary between runs.
+All five downloaded files decoded at 720 × 1280 and had `.webm` extensions. The Sunny export's decoded audio ran 14.940s with mid RMS 0.1787 (1–13s) falling to tail RMS 0.01814 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 15.000s with RMS 0.2941 at both 6s and 13s, proving the 4-second source looped. The three silent exports were rejected by `decodeAudioData`, structurally confirming the absence of any audio track. File sizes and precise frame timings vary between runs.
 
 ## Rendering and timing
 
@@ -68,11 +68,13 @@ The output canvas is 720 × 1280 and uses `captureStream(30)`. Photos fill the f
 
 | Photos | Scene lengths | Motions | End card |
 | --- | --- | --- | --- |
-| 3 | 4s each | zoom-in, pan-right, zoom-out | 3s static |
-| 4 | 3s each | zoom-in, pan-left, zoom-out, pan-right | 3s static |
-| 5 | 2.4s each | zoom-in, pan-up, zoom-out, pan-down, pan-right | 3s static |
+| 3 | 4s each | zoom-in, pan-right, zoom-out | 3s |
+| 4 | 3s each | zoom-in, pan-left, zoom-out, pan-right | 3s |
+| 5 | 2.4s each | zoom-in, pan-up, zoom-out, pan-down, pan-right | 3s |
 
-Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. A dark scrim supports caption contrast.
+Camera motions are eased (sine ease-in-out) rather than linear, so each scene accelerates gently from rest and settles before the transition. Every photo frame gets a pre-rendered corner vignette (up to 28% darkening) and a very light warm color cast to unify mixed-quality photos. Captions are drawn at weight 800 with a soft drop shadow (with slight negative letter-spacing on browsers supporting canvas `letterSpacing`, applied before text measurement so wrapping is unchanged) and fade in with a small rise over the first 0.45 seconds of each scene; a soft graduated scrim over roughly the bottom 400px supports contrast without covering half the photo. The CTA end card draws the first (hero) photo blurred and darkened — pre-rendered once, drifting with a slow 4% eased zoom over its 3 seconds — with the restaurant name as a tracked-out uppercase lockup and the CTA text fading in over the card's first half second.
+
+Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. Video is recorded at 6.5 Mbps VP9 (plus 128 kbps Opus when a soundtrack is chosen), producing files around 7MB for 15 seconds.
 
 **MediaRecorder WebM often lacks duration metadata.** In the tested Chrome version, `video.duration` initially reported `Infinity`. The tests independently measure `performance.now()` immediately around the real recorder's `start()` and `stop()` calls. They also seek the decoded video to its end to discover the media endpoint, then seek to eight timestamps and sample decoded pixels. They do not substitute a declared duration for recording or playback evidence. Encoded endpoints can differ from the 15-second schedule by a frame because real-time capture and encoding are browser-scheduled.
 
