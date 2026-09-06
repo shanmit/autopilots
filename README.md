@@ -19,6 +19,17 @@ The share path is implemented and unit-tested with stubbed Web Share APIs in the
 
 Changing objectives keeps photos in slot order and resets scene captions to the new objective's templates. Existing caption edits survive navigation and photo additions/replacements; removing a photo removes its caption edit. Brief changes update untouched caption defaults, while manually edited scene captions remain yours. Long substituted defaults prefer shorter templates with intact names or offers, then whole-word trimming without dangling articles or prepositions. Your manually edited captions are not rewritten; review defaults before recording. Scene captions may be blank; the brief and final CTA must be nonblank.
 
+Default captions lead with the owner's offer in scene 1 for every objective. If the full opening template exceeds 40 characters, it falls back to the offer itself rather than replacing it with the restaurant name. The first caption is fully visible at t=0; later captions retain their fade and rise, and scene crossfades are unchanged.
+
+| Objective | Opening template | Scene 3 micro-CTA |
+| --- | --- | --- |
+| Special Offer | `{offer} at {restaurantName}` | Claim this deal now |
+| New Dish Launch | `{offer} — new on the menu` | Be first to try it |
+| Quiet Hours Special | `{offer} during quiet hours` | Grab your quiet table today |
+| First-Time Diner Deal | `{offer} for your first visit` | Claim your first-visit deal |
+
+Scene captions remain editable with a 40-character limit; the owner's final CTA retains its 25-character limit. These defaults implement the requested conversion structure; conversion lift has not been measured.
+
 The previous AutoPilots landing page is preserved as `landing.html`, with its styles retained in `styles.css`.
 
 ## Run the real browser tests
@@ -37,6 +48,7 @@ The harness drives the actual app through Chrome DevTools Protocol and native in
 
 - Required brief fields and objective; fewer than three photos; missing required slots even when optional photos are present.
 - Exact invalid-type and oversized-file errors, the 5MB boundary, corrupt images, and successful JPEG/PNG/WebP decoding.
+- Every objective leads with the offer, including a 40-character offer; a pixel comparison confirms the opening caption is opaque at t=0 and matches the settled caption position at t=0.5.
 - All objective-specific slots and default captions; scene/CTA length enforcement; literal handling of markup-like user text.
 - Every step at 320, 480, 768, and 1280 pixels without horizontal overflow; associated control labels and a visible keyboard focus outline.
 - Preview animation, pause, scrubbing, cancellation, disabled conflicting controls, and release of capture tracks.
@@ -57,20 +69,20 @@ Every check prints PASS or the failing assertion. The process exits nonzero on f
 The completed run in Chrome 152.0.7977.76 reported:
 
 ```text
-PASS: 31/31 tests; 5 complete real-time video exports (2 with soundtrack audio); zero external network requests; zero browser errors.
+PASS: 33/33 tests; 5 complete real-time video exports (2 with soundtrack audio); zero external network requests; zero browser errors.
 ```
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 8,550,697 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.004s | 6 |
-| 4 | none | 8,181,619 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.001s | 6 |
-| 5 | none | 8,425,638 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.011s | 7 |
-| 5 | Sunny (built-in) | 8,617,179 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 14.994s | 7 |
-| 5 | Uploaded 4s WAV | 8,606,753 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 15.006s | 7 |
+| 3 | none | 8,598,260 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.008s | 6 |
+| 4 | none | 8,216,874 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.004s | 15.002s | 6 |
+| 5 | none | 8,461,937 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.014s | 7 |
+| 5 | Sunny (built-in) | 8,627,746 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.014s | 7 |
+| 5 | Uploaded 4s WAV | 8,632,459 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.000s | 15.016s | 7 |
 
 All five downloaded files decoded at 720 × 1280, had `.mp4` extensions, and contained an `ftyp` signature. The table reports recorder MIME at startup; final blob MIME was `video/mp4;codecs=avc1.42001f` for silent exports and `video/mp4;codecs=avc1.42001f,mp4a.40.2` for both soundtrack exports. Both soundtrack files contained `mp4a` and `esds` markers, with no Opus in their recorder MIME.
 
-The Sunny export's decoded audio ran 14.976s with mid RMS 0.1784 (1–13s) falling to tail RMS 0.01843 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.997s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All three silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. File sizes and precise frame timings vary between runs.
+The Sunny export's decoded audio ran 14.976s with mid RMS 0.1781 (1–13s) falling to tail RMS 0.01814 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.976s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All three silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; all 6,839 matched the settled caption positions. File sizes and precise frame timings vary between runs.
 
 ## Rendering and timing
 
@@ -82,7 +94,7 @@ The output canvas is 720 × 1280 and uses `captureStream(30)`. Photos fill the f
 | 4 | 3s each | zoom-in, pan-left, zoom-out, pan-right | 3s |
 | 5 | 2.4s each | zoom-in, pan-up, zoom-out, pan-down, pan-right | 3s |
 
-Camera motions are eased (sine ease-in-out) rather than linear, so each scene accelerates gently from rest and settles before the transition. Every photo frame gets a pre-rendered corner vignette (up to 28% darkening) and a very light warm color cast to unify mixed-quality photos. Captions are drawn at weight 800 with a soft drop shadow (with slight negative letter-spacing on browsers supporting canvas `letterSpacing`, applied before text measurement so wrapping is unchanged) and fade in with a small rise over the first 0.45 seconds of each scene; a soft graduated scrim over roughly the bottom 400px supports contrast without covering half the photo. The CTA end card draws the first (hero) photo blurred and darkened — pre-rendered once, drifting with a slow 4% eased zoom over its 3 seconds — with the restaurant name as a tracked-out uppercase lockup and the CTA text fading in over the card's first half second.
+Camera motions are eased (sine ease-in-out) rather than linear, so each scene accelerates gently from rest and settles before the transition. Every photo frame gets a pre-rendered corner vignette (up to 28% darkening) and a very light warm color cast to unify mixed-quality photos. Captions are drawn at weight 800 with a soft drop shadow (with slight negative letter-spacing on browsers supporting canvas `letterSpacing`, applied before text measurement so wrapping is unchanged) and are fully visible immediately in scene 1; later scenes fade in with a small rise over their first 0.45 seconds; a soft graduated scrim over roughly the bottom 400px supports contrast without covering half the photo. The CTA end card draws the first (hero) photo blurred and darkened — pre-rendered once, drifting with a slow 4% eased zoom over its 3 seconds — with the restaurant name as a tracked-out uppercase lockup and the CTA text on a solid rounded terracotta backdrop. Text and backdrop share the same fade and rise over the card's first half second. The backdrop stays within the 56px horizontal margins; text wraps within 544px with padding, centered below the restaurant-name lockup. Normal text and maximum-length name/CTA strings were visually checked in Chrome without overlap or clipping. The button appearance is burned into the video, not an interactive link.
 
 Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. Video is recorded with a requested bitrate of 6.5 Mbps, preferring H.264 (plus 128 kbps AAC when a soundtrack is chosen). The verified 15-second MP4 exports were approximately 8.2–8.6MB; actual bitrate and size depend on the encoder and content.
 

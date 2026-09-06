@@ -218,20 +218,31 @@ try {
     }
     await click('to-review');
     assert.equal(await evaluate("document.querySelectorAll('#captions input').length"), 3);
-    assert.equal(await evaluate("document.getElementById('caption-1').value"), 'Try test tasting menu');
+    assert.equal(await evaluate("document.getElementById('caption-1').value"), 'test tasting menu at Synthetic Bistro');
   });
   await test('all objectives update exact slots and caption defaults', async () => {
     for (const [id, slot, first, second] of [
-      ['obj-new', 'The Reveal', 'Meet our new test tasting menu', 'Fresh from Synthetic Bistro'],
-      ['obj-quiet', 'Cozy Corner', 'The test tasting menu quiet hours', 'Relax at Synthetic Bistro'],
-      ['obj-new-guest', 'Signature Dish', 'Welcome to Synthetic Bistro', 'Your first test tasting menu is here'],
-      ['obj-offer', 'Hero Dish', 'Try test tasting menu', 'Limited time only!']
+      ['obj-new', 'The Reveal', 'test tasting menu — new on the menu', 'Fresh from Synthetic Bistro'],
+      ['obj-quiet', 'Cozy Corner', 'test tasting menu during quiet hours', 'Relax at Synthetic Bistro'],
+      ['obj-new-guest', 'Signature Dish', 'test tasting menu for your first visit', 'Welcome to Synthetic Bistro'],
+      ['obj-offer', 'Hero Dish', 'test tasting menu at Synthetic Bistro', 'Limited time only!']
     ]) {
       await goStep(1); await objective(id); await goStep(2);
       assert.equal(await evaluate("document.querySelector('.photo-slot h3').textContent"), slot);
       await click('to-review');
       assert.equal(await evaluate("document.getElementById('caption-1').value"), first);
       assert.equal(await evaluate("document.getElementById('caption-2').value"), second);
+    }
+  });
+  await test('every objective opens with the offer, including a 40-character offer', async () => {
+    const offers = ['VALUE TOKEN', 'X'.repeat(40)];
+    for (const offer of offers) {
+      for (const id of ['obj-offer', 'obj-new', 'obj-quiet', 'obj-new-guest']) {
+        await goStep(1); await fill('offer', offer); await objective(id); await goStep(3);
+        const caption = await evaluate("document.getElementById('caption-1').value");
+        assert.ok(caption.startsWith(offer), `${id}: offer missing or buried in ${caption}`);
+        assert.ok(caption.length <= 40);
+      }
     }
   });
   await test('long default captions preserve whole words without dangling endings', async () => {
@@ -241,7 +252,7 @@ try {
     await objective('obj-offer');
     await goStep(3);
     const example = await evaluate("document.getElementById('caption-1').value");
-    assert.equal(example, 'Try two-for-one wood-fired pizza');
+    assert.equal(example, 'two-for-one wood-fired pizza');
     console.log('  Caption example: ' + example);
     for (const id of ['obj-offer', 'obj-new', 'obj-quiet', 'obj-new-guest']) {
       await goStep(1);
@@ -252,17 +263,17 @@ try {
       for (const caption of values) {
         assert.ok(caption.length <= 40);
         assert.doesNotMatch(caption, /\b(?:at|from|of|the|a|an|to|for|with|and)[.!?]*$/i);
-        assert.ok(/(?:pizza|Table|only!|out\.|difference\.|ready\.|today!)$/.test(caption), caption);
+        assert.ok(/(?:pizza|Table|only!|now|it|today|deal)$/.test(caption), caption);
       }
     }
   });
-  await test('short default captions are unchanged', async () => {
+  await test('short default captions match the offer-led templates', async () => {
     await goStep(1); await fill('restaurantName', 'Cafe'); await fill('offer', 'soup');
     for (const [id, expected] of [
-      ['obj-offer', ['Try soup at Cafe', 'Limited time only!', "Don't miss out."]],
-      ['obj-new', ['Meet our new soup', 'Fresh from Cafe', 'Taste the difference.']],
-      ['obj-quiet', ['The soup quiet hours', 'Relax at Cafe', 'Your table is ready.']],
-      ['obj-new-guest', ['Welcome to Cafe', 'Your first soup is here', 'Join us today!']]
+      ['obj-offer', ['soup at Cafe', 'Limited time only!', 'Claim this deal now']],
+      ['obj-new', ['soup — new on the menu', 'Fresh from Cafe', 'Be first to try it']],
+      ['obj-quiet', ['soup during quiet hours', 'Relax at Cafe', 'Grab your quiet table today']],
+      ['obj-new-guest', ['soup for your first visit', 'Welcome to Cafe', 'Claim your first-visit deal']]
     ]) {
       await goStep(1); await objective(id); await goStep(3);
       assert.deepEqual(await evaluate("[...document.querySelectorAll('#captions input')].map(n=>n.value)"), expected);
@@ -295,6 +306,32 @@ try {
     await fill('end-caption', 'Book a test table');
     await fill('caption-1', 'SYNTHETIC TEST IMAGE 1');
     await fill('caption-2', 'SYNTHETIC TEST IMAGE 2');
+  });
+  await test('first-frame caption pixels are present at full opacity at t=0', async () => {
+    const original = await evaluate("document.getElementById('caption-1').value");
+    const metrics = await evaluate(`(() => {
+      const input=document.getElementById('caption-1'), slider=document.getElementById('preview-time');
+      const context=document.getElementById('preview').getContext('2d');
+      const sample=(text,time)=>{
+        input.value=text;input.dispatchEvent(new Event('input',{bubbles:true}));
+        slider.value=String(time);slider.dispatchEvent(new Event('input',{bubbles:true}));
+        return context.getImageData(56,980,608,140).data;
+      };
+      const blank=sample('',0), first=sample('OFFER NOW',0), settled=sample('OFFER NOW',0.5);
+      let bright=0, matching=0, added=0;
+      for(let i=0;i<first.length;i+=4){
+        if(first[i]>245 && first[i+1]>245 && first[i+2]>245){
+          bright++;
+          if(settled[i]>245 && settled[i+1]>245 && settled[i+2]>245) matching++;
+          if(blank[i]<220 || blank[i+1]<220 || blank[i+2]<220) added++;
+        }
+      }
+      return {bright,matching,added};
+    })()`);
+    assert.ok(metrics.added > 1000, `no opaque opening caption pixels: ${JSON.stringify(metrics)}`);
+    assert.ok(metrics.matching / metrics.bright > 0.98, `opening caption differs from settled text: ${JSON.stringify(metrics)}`);
+    console.log('  First-frame caption pixels: ' + JSON.stringify(metrics));
+    await fill('caption-1', original); await fill('preview-time', '0');
   });
   await test('responsive layout and associated control labels at 320–1280px', async () => {
     for (const width of [320, 480, 768, 1280]) {

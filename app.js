@@ -9,7 +9,7 @@
         ['slot-detail', 'Close-up Detail', 'highlights ingredients', 'macro view of textures'],
         ['slot-bonus', 'Happy Guest', 'adds social proof', 'guest looking at the food']
       ],
-      captions: ['Try {offer} at {restaurantName}', 'Limited time only!', "Don't miss out."]
+      captions: ['{offer} at {restaurantName}', 'Limited time only!', 'Claim this deal now']
     },
     'obj-new': {
       slots: [
@@ -18,7 +18,7 @@
         ['slot-texture', 'Texture Shot', 'focuses on mouthfeel', 'fork lifting a bite'],
         ['slot-chef', 'Behind-the-Scenes', 'human element', "chef's hands in action"]
       ],
-      captions: ['Meet our new {offer}', 'Fresh from {restaurantName}', 'Taste the difference.']
+      captions: ['{offer} — new on the menu', 'Fresh from {restaurantName}', 'Be first to try it']
     },
     'obj-quiet': {
       slots: [
@@ -27,7 +27,7 @@
         ['slot-pair', 'Drink or Side', 'the accompaniment', 'high angle showing glass and plate'],
         ['slot-entry', 'Welcome View', 'invites you inside', 'straight-on storefront or patio']
       ],
-      captions: ['The {offer} quiet hours', 'Relax at {restaurantName}', 'Your table is ready.']
+      captions: ['{offer} during quiet hours', 'Relax at {restaurantName}', 'Grab your quiet table today']
     },
     'obj-new-guest': {
       slots: [
@@ -36,7 +36,7 @@
         ['slot-full', 'Main Dining', 'overall scale and buzz', 'wide shot of multiple tables'],
         ['slot-finish', 'Dessert or Coffee', 'the perfect ending', 'top-down small dessert plate']
       ],
-      captions: ['Welcome to {restaurantName}', 'Your first {offer} is here', 'Join us today!']
+      captions: ['{offer} for your first visit', 'Welcome to {restaurantName}', 'Claim your first-visit deal']
     }
   };
   const MOTIONS = {
@@ -314,13 +314,13 @@
     if (full.length <= limit) return full;
     // Prefer intact offer/name substitutions over partial names or phrases.
     const variants = {
-      'Try {offer} at {restaurantName}': ['Try {offer}', 'Visit {restaurantName}', '{offer}'],
-      'Meet our new {offer}': ['New: {offer}', '{offer}'],
+      '{offer} at {restaurantName}': ['{offer}'],
+      '{offer} — new on the menu': ['{offer}'],
       'Fresh from {restaurantName}': ['From {restaurantName}', '{restaurantName}'],
-      'The {offer} quiet hours': ['Quiet hours: {offer}', 'Relax at {restaurantName}', '{offer}'],
+      '{offer} during quiet hours': ['{offer}'],
       'Relax at {restaurantName}': ['Visit {restaurantName}', '{restaurantName}'],
       'Welcome to {restaurantName}': ['Visit {restaurantName}', '{restaurantName}'],
-      'Your first {offer} is here': ['Try {offer}', '{offer}']
+      '{offer} for your first visit': ['{offer}']
     };
     const dangling = /(?:^|\s)(?:at|from|of|the|a|an|to|for|with|and)[^\p{L}\p{N}]*$/iu;
     const candidates = [full, ...(variants[template] || []).map(fillTemplate)];
@@ -729,17 +729,31 @@
     if ('letterSpacing' in context) context.letterSpacing = options.letterSpacing ?? (size >= 48 ? '-1px' : '0px');
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillStyle = color;
     if (options.alpha !== undefined) context.globalAlpha *= options.alpha;
+    const lines = wrappedLines(context, text, options.button ? 544 : 608);
+    const lineHeight = size * 1.25;
+    if (options.button) {
+      const left = 56, right = 664, radius = 24;
+      const height = lines.length * lineHeight + 40;
+      const top = centerY - height / 2, bottom = centerY + height / 2;
+      context.fillStyle = '#b83b28';
+      context.beginPath();
+      context.moveTo(left + radius, top);
+      context.arcTo(right, top, right, bottom, radius);
+      context.arcTo(right, bottom, left, bottom, radius);
+      context.arcTo(left, bottom, left, top, radius);
+      context.arcTo(left, top, right, top, radius);
+      context.closePath();
+      context.fill();
+    }
+    context.fillStyle = color;
     context.shadowColor = 'rgba(0,0,0,.55)';
     context.shadowBlur = 12;
     context.shadowOffsetY = 2;
-    const lines = wrappedLines(context, text, 608);
-    const lineHeight = size * 1.25;
     lines.forEach((line, index) => context.fillText(line, 360, centerY + (index - (lines.length - 1) / 2) * lineHeight));
     context.restore();
   }
-  // Fade + rise a caption over the first 0.45s a scene is on screen.
+  // Fade + rise later captions; the opening hook is visible immediately.
   function entrance(seconds, start, window = 0.45) {
     return easeInOutSine(Math.min(1, Math.max(0, (seconds - start) / window)));
   }
@@ -760,7 +774,7 @@
       context.fillRect(310, 318, 100, 3);
       context.restore();
       drawText(context, $('restaurantName').value.trim().toUpperCase(), 385, 34, '#f3d4bf', { letterSpacing: '6px', alpha: enter });
-      drawText(context, $('end-caption').value.trim(), 660 + (1 - enter) * 24, 68, '#ffffff', { alpha: enter });
+      drawText(context, $('end-caption').value.trim(), 700 + (1 - enter) * 24, 68, '#ffffff', { alpha: enter, button: true });
       return;
     }
     const duration = 12 / list.length;
@@ -793,7 +807,7 @@
     scrim.addColorStop(1, 'rgba(0,0,0,.58)');
     context.fillStyle = scrim;
     context.fillRect(0, 880, 720, 400);
-    const enter = entrance(seconds, sceneIndex * duration);
+    const enter = sceneIndex === 0 ? 1 : entrance(seconds, sceneIndex * duration);
     drawText(context, sceneCaptions[sceneIndex] || '', 1050 + (1 - enter) * 24, 56, '#ffffff', { alpha: enter });
   }
   function render(seconds) {
