@@ -148,3 +148,6 @@ body:has(.role-grid) { background: #0f172a; color: #f8fafc; min-height: 100vh; d
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }
+
+.restore-prompt { border: 1px solid var(--line); border-radius: .7rem; padding: 1rem; margin-bottom: 1rem; background: #f6f0e7; }
+.restore-prompt p { margin-bottom: .6rem; }

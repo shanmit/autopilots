@@ -95,6 +95,186 @@
     : unsupported;
   $('generate').disabled = !mimeType;
 
+  // Autosave stores source files only; live decoded media never depends on storage.
+  let sessionDb = null;
+  let autosaveEnabled = true;
+  let savedSession = null;
+  let restoring = false;
+  let saveTimer = 0;
+  let sessionChanged = false;
+  let saveQueue = Promise.resolve();
+  let quotaStage = 0;
+  let omittedPhoto = -1;
+  const SESSION_AGE = 7 * 24 * 60 * 60 * 1000;
+  function storageUnavailable() {
+    autosaveEnabled = false;
+    $('autosave-note').textContent = 'Autosave is unavailable for this session. You can keep editing and download your video.';
+  }
+  function sessionTransaction(mode, action) {
+    return new Promise((resolve, reject) => {
+      const transaction = sessionDb.transaction('sessions', mode);
+      let result;
+      const request = action(transaction.objectStore('sessions'));
+      request.onsuccess = () => { result = request.result; };
+      transaction.oncomplete = () => resolve(result);
+      transaction.onabort = () => reject(transaction.error || request.error || new Error('Autosave transaction aborted'));
+      transaction.onerror = () => { /* Let failed requests abort the transaction. */ };
+      request.onerror = () => { /* The transaction abort reports the failure. */ };
+    });
+  }
+  function validSession(record) {
+    return record && record.version === 1 && Number.isFinite(record.savedAt) &&
+      Date.now() - record.savedAt < SESSION_AGE && Object.hasOwn(OBJECTIVES, record.objective) &&
+      ['restaurantName', 'offer', 'cta'].every(id => typeof record.brief?.[id] === 'string') &&
+      Array.isArray(record.photos) && record.photos.length === 5 && record.photos.every(file => file === null || file instanceof Blob) &&
+      Array.isArray(record.captionEdits) && record.captionEdits.length === 5 && record.captionEdits.every(text => text === null || typeof text === 'string') &&
+      typeof record.endCaption === 'string' && (record.audio === null || record.audio instanceof Blob);
+  }
+  async function initializeAutosave() {
+    try {
+      sessionDb = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('autopilots', 1);
+        request.onupgradeneeded = () => {
+          try { request.result.createObjectStore('sessions'); }
+          catch (err) {
+            reject(err);
+            try { request.transaction.abort(); } catch { /* Already aborted. */ }
+          }
+        };
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('Storage blocked'));
+        request.onsuccess = () => {
+          if (!autosaveEnabled) { request.result.close(); return; }
+          resolve(request.result);
+        };
+      });
+      sessionDb.onversionchange = () => { sessionDb.close(); storageUnavailable(); };
+      const record = await sessionTransaction('readonly', store => store.get('current'));
+      if (record && !validSession(record)) await sessionTransaction('readwrite', store => store.delete('current'));
+      else if (record) { savedSession = record; $('restore-prompt').hidden = false; }
+      $('autosave-note').textContent = '';
+    } catch { storageUnavailable(); }
+  }
+  function sessionSnapshot() {
+    const objective = $('objective').value;
+    if (!Object.hasOwn(OBJECTIVES, objective)) return null;
+    const brief = Object.fromEntries(['restaurantName', 'offer', 'cta'].map(id => [id, $(id).value]));
+    if (!Object.values(brief).some(Boolean) && !activePhotos().length && !userAudio) return null;
+    const templates = [...OBJECTIVES[objective].captions, '{restaurantName}', '{offer}'];
+    let scene = 0;
+    return { version: 1, savedAt: Date.now(), brief, objective,
+      photos: photos.map(photo => photo?.file || null),
+      sceneCaptions: photos.map((photo, slot) => {
+        if (!photo) return null;
+        const template = templates[scene++];
+        return captionEdits[slot] ?? defaultCaption(template);
+      }),
+      captionEdits: [...captionEdits], endCaption: $('end-caption').value,
+      endEdited: !!$('end-caption').dataset.edited, music: musicChoice(), audio: userAudio?.file || null };
+  }
+  async function writeSession(record) {
+    while (autosaveEnabled) {
+      // Each retry changes only this storage snapshot, never the live editor.
+      const candidate = { ...record, photos: [...record.photos], audio: quotaStage >= 1 ? null : record.audio };
+      if (omittedPhoto >= 0) candidate.photos[omittedPhoto] = null;
+      candidate.incomplete = quotaStage > 0;
+      try {
+        await sessionTransaction('readwrite', store => store.put(candidate, 'current'));
+        $('autosave-note').textContent = quotaStage ? 'Storage is nearly full. Some media could not be autosaved; your current edits are still here.' : 'Saved on this device.';
+        return;
+      } catch (err) {
+        if (err?.name !== 'QuotaExceededError' || quotaStage >= 2) { storageUnavailable(); return; }
+        quotaStage++;
+        if (quotaStage === 2) {
+          omittedPhoto = record.photos.reduce((largest, file, index) => file && (largest < 0 || file.size > record.photos[largest].size) ? index : largest, -1);
+        }
+      }
+    }
+  }
+  function saveSessionNow(changed = false) {
+    sessionChanged ||= changed;
+    clearTimeout(saveTimer);
+    if (!autosaveEnabled || restoring || savedSession) return;
+    try {
+      const record = sessionSnapshot();
+      if (!record && !sessionChanged) return;
+      saveQueue = saveQueue.then(async () => {
+        await storageReady;
+        if (autosaveEnabled && !savedSession) {
+          if (record) await writeSession(record);
+          else {
+            await sessionTransaction('readwrite', store => store.delete('current'));
+            $('autosave-note').textContent = '';
+          }
+        }
+      }).catch(storageUnavailable);
+    } catch { storageUnavailable(); }
+  }
+  function scheduleAutosave() {
+    if (restoring) return;
+    sessionChanged = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveSessionNow, 800);
+  }
+  async function startFresh() {
+    clearTimeout(saveTimer);
+    $('start-fresh').disabled = true;
+    $('restore-session').disabled = true;
+    try {
+      await saveQueue;
+      if (autosaveEnabled) await sessionTransaction('readwrite', store => store.delete('current'));
+    } catch { storageUnavailable(); }
+    savedSession = null;
+    $('restore-prompt').hidden = true;
+    $('start-fresh').disabled = false;
+    $('restore-session').disabled = false;
+  }
+  async function restoreSession() {
+    const record = savedSession;
+    if (!record || restoring || recordingJob || pendingUploads) return;
+    restoring = true;
+    $('restore-session').disabled = true;
+    $('start-fresh').disabled = true;
+    $('editor').disabled = true;
+    document.querySelectorAll('[data-step]').forEach(button => { button.disabled = true; });
+    try {
+      invalidateExport();
+      for (const id of ['restaurantName', 'offer', 'cta']) $(id).value = record.brief[id].slice(0, $(id).maxLength);
+      $('objective').value = record.objective;
+      photos.forEach((photo, index) => { photo?.bitmap.close(); photos[index] = null; uploadVersions[index]++; });
+      renderPhotoSlots();
+      for (let index = 0; index < 5; index++) {
+        if (record.photos[index]) {
+          const file = record.photos[index];
+          const input = document.querySelectorAll('#photo-slots input')[index];
+          await uploadPhoto(index, { files: [file], id: input.id, value: '' });
+        }
+      }
+      captionEdits = record.captionEdits.map(text => text === null ? null : text.slice(0, 40));
+      $('end-caption').value = record.endCaption.slice(0, 25);
+      if (record.endEdited) $('end-caption').dataset.edited = 'true';
+      else delete $('end-caption').dataset.edited;
+      userAudio = null;
+      if (record.audio) await uploadMusic({ files: [record.audio], value: '' });
+      const choice = [...document.querySelectorAll('input[name="music"]')].find(radio => radio.value === record.music);
+      if (choice) choice.checked = true;
+      $('music-upload-field').hidden = musicChoice() !== 'music-upload';
+      $('remove-audio').hidden = !userAudio;
+      savedSession = null;
+      sessionChanged = true;
+      $('restore-prompt').hidden = true;
+      showStep(activePhotos().length >= 3 && photos.slice(0, 3).every(Boolean) ? 3 : 1);
+      status(record.incomplete ? 'Saved edits restored. Some media was not saved; add any missing files.' : 'Your saved edits are restored. Generate a new video when ready.');
+    } catch { status('Some saved media could not be restored. Your editor is ready to use.'); }
+    finally {
+      restoring = false;
+      $('editor').disabled = false;
+      document.querySelectorAll('[data-step]').forEach(button => { button.disabled = false; });
+      $('restore-session').disabled = false;
+      $('start-fresh').disabled = false;
+    }
+  }
+
   function element(tag, text, className) {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -253,6 +433,7 @@
           photos[index].bitmap.close();
           photos[index] = null;
           captionEdits[index] = null;
+          saveSessionNow(true);
           invalidateExport();
           renderPhotoSlots();
           $(id).focus();
@@ -296,10 +477,11 @@
       }
       if (version !== uploadVersions[index]) { bitmap.close(); return; }
       if (photos[index]) photos[index].bitmap.close();
-      photos[index] = { bitmap, name: file.name };
+      photos[index] = { bitmap, name: file.name, file };
       invalidateExport();
       renderPhotoSlots();
       $(input.id)?.focus();
+      saveSessionNow(true);
       status(`${activePhotos().length} photo${activePhotos().length === 1 ? '' : 's'} ready. Photos remain in this browser.`);
     } catch {
       input.value = '';
@@ -358,6 +540,7 @@
         input.value = input.value.slice(0, 40);
         captionEdits[slotIndices[index]] = input.value;
         sceneCaptions[index] = input.value;
+        scheduleAutosave();
         counter.textContent = `${input.value.length} / 40 characters`;
         invalidateExport();
         render(previewSeconds);
@@ -658,7 +841,9 @@
       for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
         buffer.copyToChannel(decoded.getChannelData(channel).subarray(0, length), channel);
       }
-      userAudio = { buffer, name: file.name };
+      userAudio = { buffer, name: file.name, file };
+      $('remove-audio').hidden = false;
+      saveSessionNow(true);
       invalidateExport();
       status(`${file.name} ready. Audio stays in this browser.`);
     } catch {
@@ -850,6 +1035,8 @@
   }
   function setBusy(busy) {
     $('editor').disabled = busy;
+    $('restore-session').disabled = busy;
+    $('start-fresh').disabled = busy;
     document.querySelectorAll('[data-step]').forEach(button => { button.disabled = busy; });
     $('recording').hidden = !busy;
     document.querySelector('.brand').toggleAttribute('inert', busy);
@@ -979,6 +1166,7 @@
     captionEdits = Array(5).fill(null);
     invalidateExport();
     renderPhotoSlots();
+    saveSessionNow(true);
     status('Objective updated. Photos stay in order; slot guidance and default captions now follow your objective.');
   });
   for (const id of ['restaurantName', 'offer', 'cta']) {
@@ -986,12 +1174,14 @@
       $(id).value = $(id).value.slice(0, $(id).maxLength);
       $(id).removeAttribute('aria-invalid');
       if (id === 'cta') delete $('end-caption').dataset.edited;
+      scheduleAutosave();
       invalidateExport();
     });
   }
   $('end-caption').addEventListener('input', () => {
     $('end-caption').value = $('end-caption').value.slice(0, 25);
     $('end-caption').dataset.edited = 'true';
+    scheduleAutosave();
     $('end-caption').removeAttribute('aria-invalid');
     updateEndCount();
     invalidateExport();
@@ -1000,8 +1190,16 @@
   document.querySelectorAll('input[name="music"]').forEach(radio => radio.addEventListener('change', () => {
     stopPreview();
     $('music-upload-field').hidden = musicChoice() !== 'music-upload';
+    saveSessionNow(true);
     invalidateExport();
   }));
+  $('restore-session').addEventListener('click', restoreSession);
+  $('start-fresh').addEventListener('click', startFresh);
+  $('remove-audio').addEventListener('click', () => {
+    stopPreview(); musicVersion++; userAudio = null;
+    $('music-file').value = ''; $('remove-audio').hidden = true;
+    invalidateExport(); saveSessionNow(true);
+  });
   $('music-file').addEventListener('change', () => uploadMusic($('music-file')));
   $('preview-time').addEventListener('input', () => { stopPreview(); setPreviewTime(Number($('preview-time').value)); });
   $('play-preview').addEventListener('click', togglePreview);
@@ -1013,26 +1211,24 @@
   $('cancel').addEventListener('click', () => stopRecording('cancel'));
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
+      saveSessionNow();
       stopPreview();
       if (recordingJob) stopRecording('Recording stopped because this tab was hidden. Keep it visible and try again.');
     }
   });
   window.addEventListener('pagehide', () => {
+    saveSessionNow();
     stopPreview();
     if (recordingJob) stopRecording('cancel');
     invalidateExport();
-    photos.forEach((photo, index) => {
-      uploadVersions[index]++;
-      photo?.bitmap.close();
-      photos[index] = null;
-    });
   });
   window.addEventListener('pageshow', event => {
     if (event.persisted) {
       renderPhotoSlots();
-      showStep(1);
-      status('Photos were cleared when you left this page. Add them again to create a video.');
+      showStep(currentStep);
+      status('Your edits are still here. Generate a new video when ready.');
     }
   });
   renderPhotoSlots();
+  const storageReady = initializeAutosave();
 })();

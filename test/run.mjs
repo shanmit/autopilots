@@ -709,6 +709,155 @@ try {
     assert.equal(await evaluate("!document.getElementById('editor').disabled && document.getElementById('recording').hidden && __test.tracks.every(t=>t.readyState==='ended')"), true);
     await evaluate('window.MediaRecorder=window.__nativeRecorder');
   });
+  async function storedSession(body = 'result=record;') {
+    return evaluate(`new Promise((resolve,reject)=>{
+      const open=indexedDB.open('autopilots',1);
+      open.onerror=()=>reject(open.error);
+      open.onsuccess=()=>{
+        const db=open.result, tx=db.transaction('sessions','readwrite'), store=tx.objectStore('sessions');
+        let result; const get=store.get('current');
+        get.onsuccess=()=>{const record=get.result;${body}};
+        tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(tx.error);};
+      };
+    })`);
+  }
+  async function waitStored(predicate) {
+    // Immediate autosave queues a transaction; observe its committed result, not an earlier queued write.
+    for (let attempt=0;attempt<120;attempt++) {
+      if(await storedSession(`result=!!(${predicate});`)) return;
+      await delay(50);
+    }
+    assert.fail('Timed out waiting for committed autosave: ' + predicate);
+  }
+  async function reloadEditor() {
+    await call('Page.reload');
+    await until("document.readyState==='complete' && document.getElementById('autosave-note').textContent!=='Checking for a saved video…'");
+  }
+  const savedState = () => evaluate(`({
+    brief:['restaurantName','offer','cta','objective'].map(id=>document.getElementById(id).value),
+    captions:[...document.querySelectorAll('#captions input')].map(n=>n.value),
+    end:document.getElementById('end-caption').value,
+    edited:document.getElementById('end-caption').dataset.edited,
+    photos:document.querySelectorAll('.photo-thumb').length,
+    music:document.querySelector('input[name="music"]:checked').value
+  })`);
+  await test('saved original photos/audio, brief and edited captions restore and generate', async () => {
+    await goStep(1); await fill('offer','restore tasting menu'); await objective('obj-new-guest'); await goStep(3);
+    await fill('caption-1','Owner caption saved'); await fill('end-caption','Owner CTA saved');
+    await selectMusic('music-upload');
+    await until(`(async()=>{const r=await new Promise(resolve=>{const o=indexedDB.open('autopilots',1);o.onsuccess=()=>{const d=o.result,t=d.transaction('sessions'),g=t.objectStore('sessions').get('current');g.onsuccess=()=>resolve(g.result);t.oncomplete=()=>d.close();};});return r?.captionEdits[0]==='Owner caption saved' && r?.music==='music-upload';})()`);
+    const before=await savedState();
+    const stored=await storedSession("result={keys:Object.keys(record).sort(),flags:record.captionEdits,photos:record.photos.map(f=>({name:f.name,size:f.size,type:f.type})),audio:{name:record.audio.name,size:record.audio.size,type:record.audio.type}};store.put(record,'fixture');");
+    assert.deepEqual(stored.flags, ['Owner caption saved',null,null,null,null]);
+    assert.deepEqual(stored.photos, await evaluate('__syntheticPhotos.map(f=>({name:f.name,size:f.size,type:f.type}))'));
+    assert.deepEqual(stored.audio, await evaluate('({name:__syntheticWav.name,size:__syntheticWav.size,type:__syntheticWav.type})'));
+    assert.deepEqual(stored.keys,['audio','brief','captionEdits','endCaption','endEdited','incomplete','music','objective','photos','savedAt','sceneCaptions','version']);
+    await reloadEditor();
+    assert.equal(await evaluate("!document.getElementById('restore-prompt').hidden && document.querySelectorAll('.photo-thumb').length===0"),true);
+    await assertPhoneTargets();
+    await click('restore-session');
+    await until("document.getElementById('restore-prompt').hidden && !document.getElementById('editor').disabled");
+    assert.deepEqual(await savedState(),before);
+    await goStep(1);await fill('restaurantName','Restored Bistro');await goStep(3);
+    assert.equal(await evaluate("document.getElementById('caption-1').value"),'Owner caption saved');
+    assert.equal(await evaluate("document.getElementById('caption-2').value"),'Welcome to Restored Bistro');
+    await verifyExport(5,{audioTracks:1});
+  });
+  await test('visibilitychange during recording saves edits without restoring recorder state', async () => {
+    await fill('caption-1','Saved at interruption');
+    await click('generate'); await delay(200);
+    await evaluate("Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));delete document.hidden;");
+    await until("document.getElementById('recording').hidden");
+    const record=await storedSession("result={caption:record.captionEdits[0],keys:Object.keys(record)};");
+    assert.equal(record.caption,'Saved at interruption');
+    assert.equal(record.keys.some(key=>/recording|export|url|context|buffer/i.test(key)),false);
+    await reloadEditor();await click('restore-session');
+    await until("document.getElementById('restore-prompt').hidden && !document.getElementById('editor').disabled");
+    assert.equal(await evaluate("document.getElementById('recording').hidden && document.getElementById('result').hidden && !document.getElementById('download').hasAttribute('href') && __test.recordings.length===0"),true);
+    assert.equal(await evaluate("document.getElementById('caption-1').value"),'Saved at interruption');
+  });
+  await test('Start fresh deletes the saved session and survives another reload', async () => {
+    await reloadEditor();await click('start-fresh');
+    await until("document.getElementById('restore-prompt').hidden");
+    assert.equal(await storedSession('result=record===undefined;'),true);
+    await reloadEditor();
+    assert.equal(await evaluate("document.getElementById('restore-prompt').hidden && document.querySelectorAll('.photo-thumb').length===0"),true);
+  });
+  async function seedFixture(change='') {
+    await storedSession(`const fixture=store.get('fixture');fixture.onsuccess=()=>{const value=fixture.result;${change}store.put(value,'current');};`);
+  }
+  await test('sessions older than seven days are deleted without a restore prompt', async () => {
+    await seedFixture('value.savedAt=Date.now()-8*24*60*60*1000;');
+    await reloadEditor();
+    assert.equal(await evaluate("document.getElementById('restore-prompt').hidden"),true);
+    assert.equal(await storedSession('result=record===undefined;'),true);
+  });
+  await test('an unknown saved objective is discarded', async () => {
+    await seedFixture("value.savedAt=Date.now();value.objective='removed-objective';");
+    await reloadEditor();
+    assert.equal(await evaluate("document.getElementById('restore-prompt').hidden"),true);
+    assert.equal(await storedSession('result=record===undefined;'),true);
+  });
+  await test('debounced edits save and removing all work clears the saved record', async () => {
+    await seedFixture('value.savedAt=Date.now();');await reloadEditor();await click('restore-session');
+    await until("document.getElementById('restore-prompt').hidden && !document.getElementById('editor').disabled");
+    await fill('caption-1','Debounced owner edit');
+    await delay(1000);
+    assert.equal(await storedSession('result=record.captionEdits[0];'),'Debounced owner edit');
+    await click('remove-audio');
+    await waitStored('record.audio===null');
+    await goStep(2);
+    for(let i=0;i<5;i++) await evaluate("document.querySelector('.photo-slot .secondary').click()");
+    await waitStored('record.photos.every(file=>file===null)');
+    await goStep(1);
+    for(const id of ['restaurantName','offer','cta'])await fill(id,'');
+    await delay(1000);
+    assert.equal(await storedSession('result=record===undefined;'),true);
+    await reloadEditor();
+    assert.equal(await evaluate("document.getElementById('restore-prompt').hidden"),true);
+  });
+  await test('quota shedding drops stored audio then largest photo without changing live media', async () => {
+    await seedFixture('value.savedAt=Date.now();');await reloadEditor();await click('restore-session');
+    await until("document.getElementById('restore-prompt').hidden && !document.getElementById('editor').disabled");
+    await evaluate(`window.__realPut=IDBObjectStore.prototype.put;window.__quotaAttempts=[];
+      IDBObjectStore.prototype.put=function(value,key){
+        if(key==='current'){
+          __quotaAttempts.push({audio:!!value.audio,photos:value.photos.map(f=>f?.size||0)});
+          if(__quotaAttempts.length<=2)throw new DOMException('Synthetic quota','QuotaExceededError');
+        }
+        return __realPut.call(this,value,key);
+      };`);
+    await selectMusic('music-sunny');
+    await until("document.getElementById('autosave-note').textContent.includes('nearly full')");
+    const attempts=await evaluate('__quotaAttempts');assert.equal(attempts.length,3);
+    assert.equal(attempts[0].audio,true);assert.equal(attempts[1].audio,false);assert.equal(attempts[2].audio,false);
+    const largest=attempts[0].photos.indexOf(Math.max(...attempts[0].photos));
+    assert.equal(attempts[2].photos[largest],0);
+    assert.equal(await evaluate("document.querySelectorAll('.photo-thumb').length===5 && !document.getElementById('remove-audio').hidden"),true);
+    await evaluate("IDBObjectStore.prototype.put=function(){throw new DOMException('Synthetic quota','QuotaExceededError');}");
+    await selectMusic('music-upload');
+    await until("document.getElementById('autosave-note').textContent.includes('unavailable')");
+    assert.equal(await evaluate("document.getElementById('error').textContent"),'');
+    assert.equal(await evaluate("document.querySelectorAll('.photo-thumb').length"),5);
+    await evaluate('IDBObjectStore.prototype.put=__realPut');
+  });
+  await test('IndexedDB unavailable still permits a fresh full export without an error', async () => {
+    // Carry only test fixtures across reload; the app has no storage access.
+    const fixture=await evaluate(`(async()=>{
+      const open=await new Promise((resolve,reject)=>{const r=indexedDB.open('autopilots',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      const record=await new Promise(resolve=>{const t=open.transaction('sessions'),r=t.objectStore('sessions').get('fixture');r.onsuccess=()=>resolve(r.result);t.oncomplete=()=>open.close();});
+      return Promise.all(record.photos.slice(0,3).map(async f=>({name:f.name,type:f.type,bytes:Array.from(new Uint8Array(await f.arrayBuffer()))})));
+    })()`);
+    const hook=await call('Page.addScriptToEvaluateOnNewDocument',{source:"Object.defineProperty(window,'indexedDB',{configurable:true,get(){throw new DOMException('Storage blocked','SecurityError');}});"});
+    await reloadEditor();
+    assert.equal(await evaluate("document.getElementById('error').textContent"),'');
+    await fill('restaurantName','No Storage Bistro');await fill('offer','fresh tasting menu');await fill('cta','Book a table');await click('to-photos');
+    await evaluate(`window.__offlinePhotos=${JSON.stringify(fixture)}.map(f=>new File([new Uint8Array(f.bytes)],f.name,{type:f.type}));`);
+    for(let i=0;i<3;i++){await upload(i,`__offlinePhotos[${i}]`);await until(`document.querySelectorAll('.photo-thumb').length===${i+1}`);}
+    await click('to-review');await verifyExport(3);
+    assert.equal(await evaluate("document.getElementById('error').textContent"),'');
+    await call('Page.removeScriptToEvaluateOnNewDocument',{identifier:hook.identifier});
+  });
   await test('unsupported MIME choices show a clear message and no broken download', async () => {
     await call('Page.addScriptToEvaluateOnNewDocument', { source: 'if(window.MediaRecorder)MediaRecorder.isTypeSupported=()=>false;' });
     await call('Page.reload');

@@ -26,6 +26,8 @@
       <button type="button" data-step="3"><span>3</span> Review and generate</button>
     </nav>
     <p id="error" class="error" role="alert" aria-live="assertive" aria-atomic="true"></p>
+    <section id="restore-prompt" class="restore-prompt" aria-label="Saved video" hidden><p>Restore your last video?</p><button id="restore-session" type="button" class="secondary">Restore</button> <button id="start-fresh" type="button" class="secondary">Start fresh</button></section>
+    <p id="autosave-note" class="help" role="status">Checking for a saved video…</p>
     <form id="builder" novalidate>
       <fieldset id="editor">
         <legend class="sr-only">Restaurant promotion video</legend>
@@ -58,6 +60,7 @@
               <div class="field" id="music-upload-field" hidden>
                 <label for="music-file">Audio file</label>
                 <input type="file" id="music-file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,.mp3,.m4a,.wav" aria-describedby="music-hint">
+                <button id="remove-audio" type="button" class="secondary" hidden>Remove audio</button>
                 <small id="music-hint">MP3, M4A, or WAV under 15MB. Trimmed or looped to 15 seconds with a fade-out. Audio stays in this browser.</small>
               </div>
               <small>Generated in your browser; the four built-in tracks are synthesized locally. Music fades out over the final second.</small>
