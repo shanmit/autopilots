@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; media-src blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>AutoPilots — Restaurant video builder</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="index.html" aria-label="AutoPilots home">AutoPilots<span class="brand-dot" aria-hidden="true">●</span></a>
+    <span class="privacy-badge">Private by design · Works offline</span>
+  </header>
+  <main class="app-shell">
+    <div class="intro">
+      <p class="eyebrow">FROM YOUR KITCHEN TO THEIR FEED</p>
+      <h1>A little story.<br>A great reason to visit.</h1>
+      <p>Turn your restaurant photos into a 15-second promotion.<br class="desktop-break"> Your words, your photos, ready for the spotlight.</p>
+      <p class="local-note">Photos stay in your browser. No uploads or photo analysis. Optional music is synthesized locally or from your own file.</p>
+    </div>
+    <nav class="steps" aria-label="Video builder steps">
+      <button type="button" data-step="1" aria-current="step"><span>1</span> Brief</button>
+      <button type="button" data-step="2"><span>2</span> Photos</button>
+      <button type="button" data-step="3"><span>3</span> Review and generate</button>
+    </nav>
+    <p id="error" class="error" role="alert" aria-live="assertive" aria-atomic="true"></p>
+    <form id="builder" novalidate>
+      <fieldset id="editor">
+        <legend class="sr-only">Restaurant promotion video</legend>
+        <section id="step-1" class="step-panel" aria-labelledby="brief-heading">
+          <div class="section-heading"><p class="eyebrow">STEP 01 / THE IDEA</p><h2 id="brief-heading" tabindex="-1">What brings people in?</h2><p>Choose a goal and tell us what’s on the menu.</p></div>
+          <div class="brief-grid">
+            <div class="field"><label for="restaurantName">Restaurant name <span>Required</span></label><input id="restaurantName" name="restaurantName" maxlength="30" required placeholder="e.g. The Corner Table" aria-describedby="name-hint"><small id="name-hint">Up to 30 characters.</small></div>
+            <div class="field"><label for="objective">Promotion objective <span>Required</span></label><select id="objective" name="objective" required><option value="obj-offer">Special Offer</option><option value="obj-new">New Dish Launch</option><option value="obj-quiet">Quiet Hours Special</option><option value="obj-new-guest">First-Time Diner Deal</option></select></div>
+            <div class="field"><label for="offer">Offer / details <span>Required</span></label><input id="offer" name="offer" maxlength="40" required placeholder="e.g. two-for-one wood-fired pizza" aria-describedby="offer-hint"><small id="offer-hint">Up to 40 characters. Short phrases work best.</small></div>
+            <div class="field"><label for="cta">Call to action <span>Required</span></label><input id="cta" name="cta" maxlength="25" required placeholder="e.g. Book your table today" aria-describedby="cta-hint"><small id="cta-hint">Up to 25 characters. This appears on the end card.</small></div>
+          </div>
+          <div class="panel-actions"><span>Vertical video · 720 × 1280 · 15 seconds</span><button type="button" class="primary" id="to-photos">Choose photos <span aria-hidden="true">→</span></button></div>
+        </section>
+        <section id="step-2" class="step-panel" aria-labelledby="photos-heading" hidden>
+          <div class="section-heading"><p class="eyebrow">STEP 02 / THE INGREDIENTS</p><h2 id="photos-heading" tabindex="-1">Set the scene.</h2><p>Add the first three photos to get started. Two more are optional.</p><p class="help">JPEG, PNG, or WebP, each under 5MB. Photos are cropped to fill a vertical frame. Guidance comes from your chosen objective, not image analysis.</p></div>
+          <div id="photo-slots" class="photo-grid"></div>
+          <div class="panel-actions"><button type="button" class="secondary" data-back="1">← Back to brief</button><button type="button" class="primary" id="to-review">Review your video →</button></div>
+        </section>
+        <section id="step-3" class="step-panel" aria-labelledby="review-heading" hidden>
+          <div class="section-heading"><p class="eyebrow">STEP 03 / THE FINAL TOUCH</p><h2 id="review-heading" tabindex="-1">Make it yours.</h2><p>Edit every caption, preview the sequence, then generate your video.</p></div>
+          <div class="review-grid">
+            <div><div class="timeline-summary"><strong>15 seconds, start to finish.</strong><p id="timeline-note"></p></div><p class="help">Long default captions use shorter wording or whole words to fit 40 characters. Your edits stay as typed. Check the wording before generating.</p><div id="captions" class="caption-fields"></div><fieldset class="field music-options">
+              <legend>Soundtrack <span>Optional</span></legend>
+              <label><input type="radio" name="music" value="none" checked> No music (silent video)</label>
+              <label><input type="radio" name="music" value="music-sunny"> Sunny · upbeat</label>
+              <label><input type="radio" name="music" value="music-hearth"> Hearth · warm</label>
+              <label><input type="radio" name="music" value="music-velvet"> Velvet · elegant</label>
+              <label><input type="radio" name="music" value="music-voltage"> Voltage · energetic</label>
+              <label><input type="radio" name="music" value="music-upload"> Your own audio</label>
+              <div class="field" id="music-upload-field" hidden>
+                <label for="music-file">Audio file</label>
+                <input type="file" id="music-file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,.mp3,.m4a,.wav" aria-describedby="music-hint">
+                <small id="music-hint">MP3, M4A, or WAV under 15MB. Trimmed or looped to 15 seconds with a fade-out. Audio stays in this browser.</small>
+              </div>
+              <small>Generated in your browser; the four built-in tracks are synthesized locally. Music fades out over the final second.</small>
+            </fieldset><div class="field"><label for="end-caption">CTA end card <span>Required · 3 seconds</span></label><input id="end-caption" maxlength="25" required aria-describedby="end-count"><small id="end-count">0 / 25 characters</small></div></div>
+            <div class="preview-column"><canvas id="preview" width="720" height="1280" role="img" aria-label="Vertical video preview with your photos and captions"></canvas><label for="preview-time">Preview position</label><input id="preview-time" type="range" min="0" max="15" step="0.1" value="0"><div class="preview-controls"><button type="button" class="secondary" id="play-preview">Play preview</button><output id="preview-clock" for="preview-time">0.0 / 15 seconds</output></div><small>Preview plays your selected soundtrack. Keep this tab visible while recording.</small></div>
+          </div>
+          <div class="panel-actions"><button type="button" class="secondary" data-back="2">← Back to photos</button><button type="submit" class="primary" id="generate">Generate 15-second video</button></div>
+        </section>
+      </fieldset>
+    </form>
+    <section id="recording" class="recording" aria-labelledby="recording-heading" hidden><h2 id="recording-heading">Creating your video</h2><label for="recording-progress">Recording progress</label><progress id="recording-progress" max="15" value="0"></progress><button id="cancel" class="secondary" type="button">Cancel recording</button></section>
+    <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <section id="result" class="result" aria-labelledby="result-heading" hidden><div><p class="eyebrow">READY TO SHARE</p><h2 id="result-heading">Your next invitation is ready.</h2><p id="format-note"></p><a id="download" class="primary" download>Download video</a></div><video id="exported-video" controls playsinline aria-label="Generated restaurant promotion video"></video></section>
+    <p id="support-note" class="help"></p>
+  </main>
+  <footer class="app-footer"><span>AutoPilots</span><span>Made locally. Shared on your terms.</span></footer>
+</body>
+</html>
