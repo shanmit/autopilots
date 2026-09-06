@@ -14,7 +14,7 @@ Give the lead a goal and acceptance criteria. The lead delegates analysis to Gem
 
 Each assignment includes its objective, scope, expected deliverable, acceptance criteria, and dependencies. Workers do not expand scope on their own. Completed workers wait; avoid repeated status requests or idle task loops.
 
-The repository currently has no application code or commits. Before multiple engineering workers edit in parallel, establish an initial commit and give each engineer a separate branch and worktree. Until then, Codex is the single writer and Gemini is analysis only.
+The application exists on branch `main` with commit history and a clean working tree. `test/run.mjs` is the 26-case Chrome DevTools Protocol harness, run with `node test/run.mjs`. An initial commit now exists, so any additional engineer beyond `autopilots-codex` must get a separate Git worktree and branch before editing. Until then, `autopilots-codex` remains the single writer on `main`; `autopilots-gemini` stays analysis-only.
 
 ## Agent Deck commands
 
