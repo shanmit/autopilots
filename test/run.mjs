@@ -364,6 +364,7 @@ try {
     };
     const labels = await evaluate("[...document.querySelectorAll('#captions label span')].map(n=>n.textContent)");
     assert.deepEqual(labels, expectedMotions[count].map(motion => `${12 / count}s · ${motion}`));
+    const mp4Supported = await evaluate("MediaRecorder.isTypeSupported(" + JSON.stringify(audioTracks ? 'video/mp4;codecs=avc1.42E01E,mp4a.40.2' : 'video/mp4;codecs=avc1.42E01E') + ")");
     await click('generate');
     await until("!document.getElementById('recording').hidden");
     await delay(1100);
@@ -403,6 +404,12 @@ try {
     assert.ok(metrics.decodedDuration >= 14.5 && metrics.decodedDuration <= 16.5, `decoded duration after seeking: ${metrics.decodedDuration}`);
     assert.equal(metrics.tracksStopped, true);
     assert.equal(metrics.filename.endsWith(metrics.type.startsWith('video/mp4') ? '.mp4' : '.webm'), true);
+    if (mp4Supported) {
+      assert.ok(metrics.type.startsWith('video/mp4'), `MP4 supported but exported ${metrics.type}`);
+      assert.ok(metrics.filename.endsWith('.mp4'));
+      assert.ok(/avc1/i.test(metrics.recorderMime), `H.264 missing: ${metrics.recorderMime}`);
+      assert.equal(await evaluate("document.getElementById('format-note').textContent.includes('may not report duration')"), false);
+    }
     const distance = (a, b) => a.reduce((sum, x, i) => sum + (i % 4 === 3 ? 0 : Math.abs(x - b[i])), 0) / (a.length * .75);
     const distinct = [];
     for (const frame of metrics.frames) {
@@ -423,7 +430,15 @@ try {
     assert.equal(bytes.length, metrics.size);
     if (metrics.type.startsWith('video/webm')) assert.deepEqual([...bytes.subarray(0, 4)], [0x1a, 0x45, 0xdf, 0xa3]);
     else assert.equal(bytes.toString('ascii', 4, 8), 'ftyp');
-    console.log('  ' + JSON.stringify(reports.at(-1)));
+    const report = reports.at(-1);
+    report.signature = bytes.toString('ascii', 4, 8);
+    report.aacMarkers = ['mp4a', 'esds'].filter(marker => bytes.includes(Buffer.from(marker)));
+    if (audioTracks && mp4Supported) {
+      assert.ok(/mp4a/i.test(metrics.recorderMime), `AAC missing: ${metrics.recorderMime}`);
+      assert.ok(!/opus/i.test(metrics.recorderMime), `Unexpected Opus: ${metrics.recorderMime}`);
+      assert.deepEqual(report.aacMarkers, ['mp4a', 'esds']);
+    }
+    console.log('  ' + JSON.stringify(report));
     return metrics.url;
   }
   let oldUrl;
@@ -528,6 +543,21 @@ try {
     assert.ok(audio.at6 > 0.01 && audio.at13 > 0.01, `looped tone missing past the 4s source: t=6s ${audio.at6}, t=13s ${audio.at13}`);
     console.log(`  audio: duration ${audio.duration.toFixed(3)}s, RMS at 6s ${audio.at6.toFixed(4)}, at 13s ${audio.at13.toFixed(4)}`);
     await selectMusic('none');
+  });
+  await test('MP4 soundtrack exports contain AAC MIME and mp4a/esds bytes, never Opus', async () => {
+    if (await evaluate("MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.42E01E,mp4a.40.2')")) {
+      const soundtracks = reports.filter(report => report.audioTracks === 1);
+      assert.equal(soundtracks.length, 2);
+      for (const report of soundtracks) {
+        assert.ok(report.recorderMime.startsWith('video/mp4;'));
+        assert.ok(/mp4a/i.test(report.recorderMime));
+        assert.ok(!/opus/i.test(report.recorderMime));
+        assert.equal(report.signature, 'ftyp');
+        assert.deepEqual(report.aacMarkers, ['mp4a', 'esds']);
+      }
+    } else {
+      console.log('  MP4/AAC unavailable; WebM fallback exercised by soundtrack exports.');
+    }
   });
   await test('recording startup failure restores the usable editor', async () => {
     await evaluate("window.__nativeRecorder=MediaRecorder;window.MediaRecorder=class extends MediaRecorder {constructor(){throw Error('Synthetic test failure');}}");

@@ -45,12 +45,12 @@
     5: ['zoom-in', 'pan-up', 'zoom-out', 'pan-down', 'pan-right']
   };
   const MIME_CANDIDATES = [
-    'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
-    'video/mp4;codecs=avc1.42E01E', 'video/mp4'
+    'video/mp4;codecs=avc1.42E01E', 'video/mp4',
+    'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'
   ];
   const AUDIO_MIME_CANDIDATES = [
-    'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm',
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4'
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'
   ];
   const TRACKS = {
     'music-sunny':   { label: 'Sunny — upbeat',      compose: composeSunny },
@@ -825,7 +825,7 @@
     $('exported-video').src = exportUrl;
     $('download').href = exportUrl;
     $('download').download = `autopilots-promotion.${extension}`;
-    $('format-note').textContent = `${extension.toUpperCase()} video (${actualType}) · 720 × 1280 · ${job.withMusic ? 'with soundtrack' : 'silent'}. Browser and sharing-platform support varies; this is not a format conversion. WebM may not report duration until playback or seeking.`;
+    $('format-note').textContent = `${extension.toUpperCase()} video (${actualType}) · 720 × 1280 · ${job.withMusic ? 'with soundtrack' : 'silent'}. ${extension === 'webm' ? 'WebM fallback: sharing-platform support varies. WebM may not report duration until playback or seeking.' : 'MP4 file ready to download.'}`;
     $('result').hidden = false;
     status(`Video ready. Recorded ${((job.stoppedAt - job.startedAt) / 1000).toFixed(1)} seconds. Download your ${extension.toUpperCase()} file below.`);
   }

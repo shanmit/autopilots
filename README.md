@@ -9,7 +9,7 @@ Open `index.html` directly in a browser, for example by dragging it into Chrome.
 1. **Brief:** enter the restaurant name (30 characters), offer/details (40), and call to action (25), then choose one of the four objectives.
 2. **Photos:** fill the first three required slots. The fourth objective-specific slot and a fifth extra photo are optional. Choose JPEG, PNG, or WebP files, each strictly smaller than 5 × 1024 × 1024 bytes. Slot guidance follows the objective; it is not inferred from your images.
 3. **Review and generate:** edit every scene caption (40 characters maximum) and the CTA end card (25). Optionally pick a soundtrack: one of four built-in tracks synthesized locally with the Web Audio API (Sunny, Hearth, Velvet, Voltage) or your own MP3, M4A, or WAV file strictly under 15MB. Uploaded audio is decoded in memory, kept to at most its first 15 seconds, trimmed or looped to fill the video, and never leaves the browser. Preview with play/pause or the position slider — the preview plays the selected soundtrack from the scrubbed position — then generate. Recording takes 15 real seconds. Keep the tab visible. Cancel is available throughout recording.
-4. Play the resulting video or select **Download video**. The format and matching filename extension appear beside the download. Generate again after edits to replace an obsolete export.
+4. Play the resulting video or select **Download video**. MP4/H.264 is preferred, with explicit AAC when a soundtrack is selected; WebM remains a fallback. The actual format and matching filename extension appear beside the download. Generate again after edits to replace an obsolete export.
 
 Changing objectives keeps photos in slot order and resets scene captions to the new objective's templates. Existing caption edits survive navigation and photo additions/replacements; removing a photo removes its caption edit. Brief changes update untouched caption defaults, while manually edited scene captions remain yours. Long substituted defaults prefer shorter templates with intact names or offers, then whole-word trimming without dangling articles or prepositions. Your manually edited captions are not rewritten; review defaults before recording. Scene captions may be blank; the brief and final CTA must be nonblank.
 
@@ -35,10 +35,11 @@ The harness drives the actual app through Chrome DevTools Protocol and native in
 - Every step at 320, 480, 768, and 1280 pixels without horizontal overflow; associated control labels and a visible keyboard focus outline.
 - Preview animation, pause, scrubbing, cancellation, disabled conflicting controls, and release of capture tracks.
 - Five separate full recordings: silent exports with three, four, and five photos (including re-generation and object URL revocation), plus two five-photo exports with audio — one built-in track and one uploaded synthetic WAV.
+- MP4 output with an `ftyp` signature and `.mp4` filename when supported; soundtrack recorder MIME must contain `mp4a` and no `opus`, and downloaded MP4 bytes must contain `mp4a`/`esds` markers.
 - Nonempty blobs above 50,000 bytes, actual downloaded files with matching byte counts and container signatures, matching MIME/filename extensions, and 720 × 1280 video decoding.
 - Eight decoded frame samples per export. Mean RGB pixel distance must prove at least one distinct frame per photo plus the CTA; the first scene must also show motion between two samples. A static or fabricated export fails these checks.
 - Real recording wall-clock time and decoded endpoint after seeking, each within 14.5–16.5 seconds.
-- Soundtrack behavior: the three silent exports structurally carry zero audio tracks (verified at `MediaRecorder.start`) and their WebM bytes are rejected by `decodeAudioData`; the built-in-track export carries one Opus audio track whose decoded samples are nonsilent over 1–13s (RMS > 0.01) and fade to under 20% of that RMS in the final 0.25s; the uploaded 4-second synthetic 440Hz WAV is looped, with nonsilent decoded audio at 6s and 13s; upload validation rejects wrong types, files at or above 15MB, and corrupt audio with exact messages; the audition creates oscillators only while the preview is playing and none when "No music" is selected.
+- Soundtrack behavior: the three silent exports structurally carry zero audio tracks (verified at `MediaRecorder.start`), and the five-photo silent export is rejected by `decodeAudioData`; the built-in-track export carries one AAC audio track when MP4/AAC is supported whose decoded samples are nonsilent over 1–13s (RMS > 0.01) and fade to under 20% of that RMS in the final 0.25s; the uploaded 4-second synthetic 440Hz WAV is looped, with nonsilent decoded audio at 6s and 13s; upload validation rejects wrong types, files at or above 15MB, and corrupt audio with exact messages; the audition creates oscillators only while the preview is playing and none when "No music" is selected.
 - Safe handling of a recorder startup failure and no supported MIME types.
 - Zero external network requests and zero console/runtime errors throughout the flow. Only `file://` app resources, browser-local `blob:` videos, and Chrome's built-in `data:` media-control icons are allowed. Blob/data resources do not make network requests; HTTP(S), WebSocket, and every other nonlocal scheme fail the check.
 
@@ -49,18 +50,20 @@ Every check prints PASS or the failing assertion. The process exits nonzero on f
 The completed run in Chrome 152.0.7977.76 reported:
 
 ```text
-PASS: 26/26 tests; 5 complete real-time video exports (2 with soundtrack audio); zero external network requests; zero browser errors.
+PASS: 27/27 tests; 5 complete real-time video exports (2 with soundtrack audio); zero external network requests; zero browser errors.
 ```
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 6,828,888 | `video/webm;codecs=vp9` | 0 | 15.002s | 14.984s | 6 |
-| 4 | none | 7,127,860 | `video/webm;codecs=vp9` | 0 | 15.001s | 14.974s | 6 |
-| 5 | none | 7,432,731 | `video/webm;codecs=vp9` | 0 | 15.003s | 14.973s | 7 |
-| 5 | Sunny (built-in) | 7,751,201 | `video/webm;codecs=vp9,opus` | 1 | 15.001s | 14.964s | 7 |
-| 5 | Uploaded 4s WAV | 7,738,091 | `video/webm;codecs=vp9,opus` | 1 | 15.002s | 14.983s | 7 |
+| 3 | none | 8,540,486 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.016s | 6 |
+| 4 | none | 8,180,738 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.017s | 6 |
+| 5 | none | 8,417,616 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.012s | 7 |
+| 5 | Sunny (built-in) | 8,599,839 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 14.999s | 7 |
+| 5 | Uploaded 4s WAV | 8,590,995 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 15.014s | 7 |
 
-All five downloaded files decoded at 720 × 1280 and had `.webm` extensions. The Sunny export's decoded audio ran 14.940s with mid RMS 0.1787 (1–13s) falling to tail RMS 0.01814 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 15.000s with RMS 0.2941 at both 6s and 13s, proving the 4-second source looped. The three silent exports were rejected by `decodeAudioData`, structurally confirming the absence of any audio track. File sizes and precise frame timings vary between runs.
+All five downloaded files decoded at 720 × 1280, had `.mp4` extensions, and contained an `ftyp` signature. The table reports recorder MIME at startup; final blob MIME was `video/mp4;codecs=avc1.42001f` for silent exports and `video/mp4;codecs=avc1.42001f,mp4a.40.2` for both soundtrack exports. Both soundtrack files contained `mp4a` and `esds` markers, with no Opus in their recorder MIME.
+
+The Sunny export's decoded audio ran 14.954s with mid RMS 0.1784 (1–13s) falling to tail RMS 0.02131 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.997s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All three silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. File sizes and precise frame timings vary between runs.
 
 ## Rendering and timing
 
@@ -74,15 +77,15 @@ The output canvas is 720 × 1280 and uses `captureStream(30)`. Photos fill the f
 
 Camera motions are eased (sine ease-in-out) rather than linear, so each scene accelerates gently from rest and settles before the transition. Every photo frame gets a pre-rendered corner vignette (up to 28% darkening) and a very light warm color cast to unify mixed-quality photos. Captions are drawn at weight 800 with a soft drop shadow (with slight negative letter-spacing on browsers supporting canvas `letterSpacing`, applied before text measurement so wrapping is unchanged) and fade in with a small rise over the first 0.45 seconds of each scene; a soft graduated scrim over roughly the bottom 400px supports contrast without covering half the photo. The CTA end card draws the first (hero) photo blurred and darkened — pre-rendered once, drifting with a slow 4% eased zoom over its 3 seconds — with the restaurant name as a tracked-out uppercase lockup and the CTA text fading in over the card's first half second.
 
-Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. Video is recorded at 6.5 Mbps VP9 (plus 128 kbps Opus when a soundtrack is chosen), producing files around 7MB for 15 seconds.
+Each transition crossfades during the final 0.5 seconds of the outgoing scene, including the transition to the CTA. These fades are included in the timeline rather than added to it: the schedule is exactly 12 seconds of photo scenes plus 3 seconds of CTA. Text is measured and word-wrapped, including long unbroken words, within a 608px area. Video is recorded with a requested bitrate of 6.5 Mbps, preferring H.264 (plus 128 kbps AAC when a soundtrack is chosen). The verified 15-second MP4 exports were approximately 8.2–8.6MB; actual bitrate and size depend on the encoder and content.
 
-**MediaRecorder WebM often lacks duration metadata.** In the tested Chrome version, `video.duration` initially reported `Infinity`. The tests independently measure `performance.now()` immediately around the real recorder's `start()` and `stop()` calls. They also seek the decoded video to its end to discover the media endpoint, then seek to eight timestamps and sample decoded pixels. They do not substitute a declared duration for recording or playback evidence. Encoded endpoints can differ from the 15-second schedule by a frame because real-time capture and encoding are browser-scheduled.
+**Duration metadata depends on the container.** All five MP4 exports in the verified run reported finite duration immediately. WebM fallback exports may initially report `Infinity`. The tests independently measure `performance.now()` immediately around the real recorder's `start()` and `stop()` calls. When duration is nonfinite, they seek the decoded video to its end to discover the media endpoint. For every export, they seek to eight timestamps and sample decoded pixels. They do not substitute a declared duration for recording or playback evidence. Encoded endpoints can differ from the 15-second schedule by a frame because real-time capture and encoding are browser-scheduled.
 
 ## Browser and format caveats
 
-The app tests MIME candidates in this order: WebM/VP9, WebM/VP8, generic WebM, MP4/H.264, generic MP4. The browser must support both canvas capture and a candidate MediaRecorder format. Otherwise generation is disabled with a clear explanation. A startup error also restores the editor instead of offering a broken file.
+For silent exports, the app tests MIME candidates in this order: MP4/H.264, generic MP4, WebM/VP9, WebM/VP8, generic WebM. For soundtrack exports, it tries explicit MP4/H.264/AAC (`video/mp4;codecs=avc1.42E01E,mp4a.40.2`), then WebM/VP9/Opus, WebM/VP8/Opus, and generic WebM. Generic MP4 is excluded from the audio list because it produced Opus-in-MP4 in the Chrome probe. The browser must support both canvas capture and a candidate MediaRecorder format. Otherwise generation is disabled with a clear explanation. A startup error also restores the editor instead of offering a broken file.
 
-Verified in this environment with **Chrome 152.0.7977.76 on macOS**, producing **`video/webm;codecs=vp9` with `.webm` filenames** for silent exports and **`video/webm;codecs=vp9,opus`** when a soundtrack is selected (a separate audio-capable MIME candidate list is probed at startup). Other browsers and the MP4/AAC fallback have not been validated here. Browser and social-platform playback/upload support varies. This app does not transcode or rename WebM to MP4.
+Verified in this environment with **Chrome 152.0.7977.76 on macOS**, producing H.264 MP4 with `.mp4` filenames and AAC when a soundtrack is selected. Silent exports contain no audio track. Other browsers, real phones, and TikTok uploader acceptance have not been validated by this run. G1 still requires a successful real TikTok upload as evidence; these tests establish the file-format portion only. This app does not transcode or rename WebM to MP4.
 
 Known limitations:
 
