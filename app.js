@@ -8,6 +8,39 @@ function parseOfferHints(offer) {
   return { numberToken, timeWindow, urgent: /\b(?:today|tonight|last|limited|ends|only|final|now)\b/i.test(text) };
 }
 
+// Local heuristics only: extracted wording stays verbatim; only CTA fallbacks are templates.
+function analyzeBrief(text) {
+  const source = typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : '';
+  const clauses = source.split(/(?<=[.!?])\s+|;\s*|,\s+/).map(s => s.replace(/[.!?]+$/, '').trim()).filter(Boolean);
+  const proper = "[A-Z][\\p{L}\\p{N}'’&-]*(?:\\s+(?:(?:of|the|and)\\s+)?[A-Z][\\p{L}\\p{N}'’&-]*)*";
+  const named = source.match(/\b(?:we are|we['’]re)\s+([^,.!?;]+)/i)?.[1]?.split(/\s+(?:offering|serving|promoting|with|in|and (?:we|have|offer))\b/i)[0];
+  const quoted = source.match(/["“]([^"”]+)["”]/)?.[1];
+  const isA = source.match(new RegExp(`(?:^|[.!?]\\s+)(${proper})\\s+is\\s+(?:a|an)\\b`, 'u'))?.[1];
+  const at = source.match(new RegExp(`\\b[Aa]t\\s+(${proper})`, 'u'))?.[1];
+  const leading = source.match(new RegExp(`^(${proper})(?=,|\\.|\\s+(?:offers|serves|has)\\b)`, 'u'))?.[1];
+  let restaurantName = (named || quoted || isA || at || leading || '').trim().replace(/^["“]|["”]$/g, '');
+  // Don't mistake “we're offering…” or an intent for a restaurant name.
+  if (/^(?:offering|launching|looking|hoping|running|having|opening|open\b|promoting|a\b|an\b)/i.test(restaurantName)) restaurantName = '';
+  restaurantName = restaurantName.slice(0, 30);
+  const intent = restaurantName ? source.replace(restaurantName, '') : source;
+  const objective = /\b(?:first[- ]time|new customers|never been)\b/i.test(intent) ? 'obj-new-guest'
+    : /\b(?:quiet|slow|midweek)\b/i.test(intent) ? 'obj-quiet'
+    : /\b(?:new|launch|launching|just added)\b/i.test(intent) ? 'obj-new' : 'obj-offer';
+  const scored = clauses.map((clause, index) => {
+    // Keep the promoted phrase when it shares a clause with an introduction.
+    const promoted = clause.match(/\b(?:offering|offers|serving|serves|promoting|promote|showcasing)\s+(.+)/i)?.[1];
+    if (promoted) clause = promoted;
+    const hints = parseOfferHints(clause);
+    const score = hints.numberToken ? 3 : hints.timeWindow ? 2 : /\b(?:free|half price|off|new|launch|launching|special|deal|tasting)\b/i.test(clause.replace(restaurantName, '')) ? 1 : promoted ? 1 : 0;
+    return { clause, score, index };
+  }).filter(item => item.score).sort((a, b) => b.score - a.score || a.index - b.index);
+  const offer = (scored[0]?.clause || '').slice(0, 40);
+  const ask = source.match(/\b(?:book (?:a|your) table|come in|order online|walk in)(?:\s+(?:today|tonight|now))?\b/i)?.[0] || '';
+  const defaults = { 'obj-offer': 'Claim this deal now', 'obj-new': 'Be first to try it', 'obj-quiet': 'Grab your table today', 'obj-new-guest': 'Claim your first deal' };
+  const cta = (ask || (restaurantName || offer ? defaults[objective] : '')).slice(0, 25);
+  return { restaurantName, offer, cta, objective, hints: parseOfferHints(source) };
+}
+
 (() => {
   const OBJECTIVES = {
     'obj-offer': {
@@ -87,6 +120,25 @@ function parseOfferHints(offer) {
   const uploadVersions = Array(5).fill(0);
   let captionEdits = Array(5).fill(null);
   let sceneCaptions = [];
+  let derivedEdits = {};
+  let analysisTimer = 0;
+  function objectiveLabel() {
+    $('objective-label').textContent = $('objective').selectedOptions[0]?.textContent || 'Choose an objective';
+  }
+  function applyBriefAnalysis() {
+    if (!analysisTimer) return;
+    clearTimeout(analysisTimer); analysisTimer = 0;
+    const plan = analyzeBrief($('brief').value);
+    for (const id of ['restaurantName', 'offer', 'cta', 'objective']) {
+      if (!derivedEdits[id]) {
+        $(id).value = plan[id];
+        $(id).removeAttribute('aria-invalid');
+      }
+    }
+    objectiveLabel();
+    renderPhotoSlots();
+    invalidateExport();
+  }
   let currentStep = 1;
   let pendingUploads = 0;
   let previewFrame = 0;
@@ -144,6 +196,8 @@ function parseOfferHints(offer) {
     return record && record.version === 1 && Number.isFinite(record.savedAt) &&
       Date.now() - record.savedAt < SESSION_AGE && Object.hasOwn(OBJECTIVES, record.objective) &&
       ['restaurantName', 'offer', 'cta'].every(id => typeof record.brief?.[id] === 'string') &&
+      (record.rawBrief === undefined || typeof record.rawBrief === 'string') &&
+      (record.derivedEdits === undefined || (record.derivedEdits && ['restaurantName', 'offer', 'cta', 'objective'].every(id => record.derivedEdits[id] === undefined || typeof record.derivedEdits[id] === 'boolean'))) &&
       Array.isArray(record.photos) && record.photos.length === 5 && record.photos.every(file => file === null || file instanceof Blob) &&
       Array.isArray(record.captionEdits) && record.captionEdits.length === 5 && record.captionEdits.every(text => text === null || typeof text === 'string') &&
       typeof record.endCaption === 'string' && (record.audio === null || record.audio instanceof Blob);
@@ -177,10 +231,10 @@ function parseOfferHints(offer) {
     const objective = $('objective').value;
     if (!Object.hasOwn(OBJECTIVES, objective)) return null;
     const brief = Object.fromEntries(['restaurantName', 'offer', 'cta'].map(id => [id, $(id).value]));
-    if (!Object.values(brief).some(Boolean) && !activePhotos().length && !userAudio) return null;
+    if (!$('brief').value && !Object.values(brief).some(Boolean) && !activePhotos().length && !userAudio) return null;
     const templates = [...OBJECTIVES[objective].captions, '{restaurantName}', '{offer}'];
     let scene = 0;
-    return { version: 1, savedAt: Date.now(), brief, objective,
+    return { version: 1, savedAt: Date.now(), brief, objective, rawBrief: $('brief').value, derivedEdits: { ...derivedEdits },
       photos: photos.map(photo => photo?.file || null),
       sceneCaptions: photos.map((photo, slot) => {
         if (!photo) return null;
@@ -210,6 +264,7 @@ function parseOfferHints(offer) {
     }
   }
   function saveSessionNow(changed = false) {
+    applyBriefAnalysis();
     sessionChanged ||= changed;
     clearTimeout(saveTimer);
     if (!autosaveEnabled || restoring || savedSession) return;
@@ -257,8 +312,12 @@ function parseOfferHints(offer) {
     document.querySelectorAll('[data-step]').forEach(button => { button.disabled = true; });
     try {
       invalidateExport();
+      clearTimeout(analysisTimer); analysisTimer = 0;
+      $('brief').value = record.rawBrief || '';
+      derivedEdits = record.derivedEdits || { restaurantName: true, offer: true, cta: true, objective: true };
       for (const id of ['restaurantName', 'offer', 'cta']) $(id).value = record.brief[id].slice(0, $(id).maxLength);
       $('objective').value = record.objective;
+      objectiveLabel();
       photos.forEach((photo, index) => { photo?.bitmap.close(); photos[index] = null; uploadVersions[index]++; });
       renderPhotoSlots();
       for (let index = 0; index < 5; index++) {
@@ -362,6 +421,8 @@ function parseOfferHints(offer) {
     }
   }
   function validateBrief() {
+    applyBriefAnalysis();
+    if (!$('objective').value) $('objective-edit').hidden = false;
     for (const [id, name] of [['restaurantName', 'Restaurant Name'], ['offer', 'Offer / Details'], ['cta', 'Call to Action'], ['objective', 'Objective']]) {
       const input = $(id);
       if (!input.value.trim() || (id === 'objective' && !OBJECTIVES[input.value])) {
@@ -1215,7 +1276,20 @@ function parseOfferHints(offer) {
   document.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => navigate(Number(button.dataset.back))));
   $('to-photos').addEventListener('click', () => navigate(2));
   $('to-review').addEventListener('click', () => navigate(3));
+  $('brief').addEventListener('input', () => {
+    clearTimeout(analysisTimer);
+    analysisTimer = setTimeout(applyBriefAnalysis, 300);
+    scheduleAutosave();
+    invalidateExport();
+  });
+  $('change-objective').addEventListener('click', () => {
+    $('objective-edit').hidden = !$('objective-edit').hidden;
+    $('change-objective').setAttribute('aria-expanded', String(!$('objective-edit').hidden));
+    if (!$('objective-edit').hidden) $('objective').focus();
+  });
   $('objective').addEventListener('change', () => {
+    derivedEdits.objective = true;
+    objectiveLabel();
     if (!OBJECTIVES[$('objective').value]) return;
     captionEdits = Array(5).fill(null);
     invalidateExport();
@@ -1225,6 +1299,7 @@ function parseOfferHints(offer) {
   });
   for (const id of ['restaurantName', 'offer', 'cta']) {
     $(id).addEventListener('input', () => {
+      derivedEdits[id] = true;
       $(id).value = $(id).value.slice(0, $(id).maxLength);
       $(id).removeAttribute('aria-invalid');
       if (id === 'cta') delete $('end-caption').dataset.edited;

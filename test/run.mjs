@@ -419,7 +419,7 @@ try {
         assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true, `overflow at ${width}px step ${step}`);
       }
     }
-    assert.equal(await evaluate("[...document.querySelectorAll('input,select,progress')].every(n=>n.labels.length>0)"), true);
+    assert.equal(await evaluate("[...document.querySelectorAll('input,select,textarea,progress')].every(n=>n.labels.length>0)"), true);
     assert.equal(await evaluate("[...document.querySelectorAll('button')].every(n=>n.textContent.trim()||n.getAttribute('aria-label'))"), true);
     await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
     await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
@@ -818,7 +818,7 @@ try {
     assert.deepEqual(stored.flags, ['Owner caption saved',null,null,null,null]);
     assert.deepEqual(stored.photos, await evaluate('__syntheticPhotos.map(f=>({name:f.name,size:f.size,type:f.type}))'));
     assert.deepEqual(stored.audio, await evaluate('({name:__syntheticWav.name,size:__syntheticWav.size,type:__syntheticWav.type})'));
-    assert.deepEqual(stored.keys,['audio','brief','captionEdits','endCaption','endEdited','incomplete','music','objective','photos','savedAt','sceneCaptions','version']);
+    assert.deepEqual(stored.keys,['audio','brief','captionEdits','derivedEdits','endCaption','endEdited','incomplete','music','objective','photos','rawBrief','savedAt','sceneCaptions','version']);
     await reloadEditor();
     assert.equal(await evaluate("!document.getElementById('restore-prompt').hidden && document.querySelectorAll('.photo-thumb').length===0"),true);
     await assertPhoneTargets();
@@ -924,6 +924,82 @@ try {
     await click('to-review');await verifyExport(3);
     assert.equal(await evaluate("document.getElementById('error').textContent"),'');
     await call('Page.removeScriptToEvaluateOnNewDocument',{identifier:hook.identifier});
+  });
+
+  const briefCases = [
+    ["We're The Corner Table, a small pizza place in Shoreditch. Half price pints every Tuesday until 6. Want more people in on quiet weeknights.", ['The Corner Table','Half price pints every Tuesday until 6','Grab your table today','obj-quiet']],
+    ['We are Ember. $5 pints tonight. Come in tonight.', ['Ember','$5 pints tonight','Come in tonight','obj-offer']],
+    ['Juniper is a cafe. New tasting menu. Book a table.', ['Juniper','New tasting menu','Book a table','obj-new']],
+    ['First time here? 2 for 1 for new customers. Walk in.', ['','2 for 1 for new customers','Walk in','obj-new-guest']],
+    ['At Olive House, free dessert this weekend. Order online.', ['Olive House','free dessert this weekend','Order online','obj-offer']],
+    ['  ...  ', ['','','','obj-offer']],
+    ['"Copper Kettle". Launch special: £10 lunch. Book your table today.', ['Copper Kettle','Launch special: £10 lunch','Book your table today','obj-new']],
+    ['Maple Kitchen, 50% off pizza today only.', ['Maple Kitchen','50% off pizza today only','Claim this deal now','obj-offer']],
+    ['We are Ember offering $5 pints tonight. Come in.', ['Ember','$5 pints tonight','Come in','obj-offer']],
+    ['We are "The Corner Table". 50% off pizza.', ['The Corner Table','50% off pizza','Claim this deal now','obj-offer']],
+    ['We are Ember. Promoting our sourdough pizza. Come in.', ['Ember','our sourdough pizza','Come in','obj-offer']],
+    ['We are New York Pizza. $5 pints.', ['New York Pizza','$5 pints','Claim this deal now','obj-offer']]
+  ];
+  await test('free-text analyzer reads twelve realistic briefs, including missing names and nearly empty input', async () => {
+    for (const [text, expected] of briefCases) {
+      const plan=await evaluate(`analyzeBrief(${JSON.stringify(text)})`);
+      assert.deepEqual([plan.restaurantName,plan.offer,plan.cta,plan.objective],expected,text);
+      assert.deepEqual(plan.hints,await evaluate(`parseOfferHints(${JSON.stringify(text.trim().replace(/\s+/g,' '))})`));
+    }
+  });
+  await test('brief analysis is deterministic, bounded, and degrades without inventing facts', async () => {
+    for(const [text] of briefCases) assert.deepEqual(await evaluate(`analyzeBrief(${JSON.stringify(text)})`),await evaluate(`analyzeBrief(${JSON.stringify(text)})`));
+    for(const value of [null,42,'','?','something unclear']) {
+      const plan=await evaluate(`analyzeBrief(${JSON.stringify(value)})`);
+      assert.deepEqual([plan.restaurantName,plan.offer,plan.cta,plan.objective],['','','','obj-offer']);
+    }
+    const text='We are '+ 'A'.repeat(50)+'. $5 '+ 'pizza '.repeat(20)+'. Book your table tonight.';
+    const plan=await evaluate(`analyzeBrief(${JSON.stringify(text)})`);
+    assert.equal(plan.restaurantName.length,30);assert.equal(plan.offer.length,40);assert.ok(plan.cta.length<=25);
+    for(const id of ['restaurantName','offer','cta']) assert.ok(text.includes(plan[id]),id+' not in source');
+  });
+  await test('free-text typing updates the interpretation and all corrected fields stay corrected', async () => {
+    await reloadEditor();
+    if(await evaluate("!document.getElementById('restore-prompt').hidden")) {await click('start-fresh');await until("document.getElementById('restore-prompt').hidden");}
+    await fill('brief',briefCases[1][0]);
+    await until("document.getElementById('restaurantName').value==='Ember'");
+    await fill('restaurantName','Owner spelling');await fill('offer','Owner special');await fill('cta','Owner ask');
+    await click('change-objective');await objective('obj-new-guest');
+    await fill('brief',briefCases[0][0]);await delay(400);
+    assert.deepEqual(await evaluate("['restaurantName','offer','cta','objective'].map(id=>document.getElementById(id).value)"),['Owner spelling','Owner special','Owner ask','obj-new-guest']);
+    assert.equal(await evaluate("document.getElementById('objective-label').textContent"),'First-Time Diner Deal');
+    await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    const screenshot=await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(path.join(tmpdir(), 'autopilots-brief.png'), Buffer.from(screenshot.data, 'base64'));
+    await assertPhoneTargets();
+  });
+  await test('autosave restores the raw brief, corrections and their edit protection', async () => {
+    await waitStored("record?.rawBrief === " + JSON.stringify(briefCases[0][0]));
+    await reloadEditor();await click('restore-session');await until("document.getElementById('restore-prompt').hidden && !document.getElementById('editor').disabled");
+    assert.equal(await evaluate("document.getElementById('brief').value"),briefCases[0][0]);
+    await fill('brief',briefCases[2][0]);await delay(400);
+    assert.deepEqual(await evaluate("['restaurantName','offer','cta','objective'].map(id=>document.getElementById(id).value)"),['Owner spelling','Owner special','Owner ask','obj-new-guest']);
+  });
+  await test('an immediate navigation flushes pending analysis and untouched fields keep following the brief', async () => {
+    await waitStored("record?.rawBrief === " + JSON.stringify(briefCases[2][0]));
+    await reloadEditor();await click('start-fresh');await until("document.getElementById('restore-prompt').hidden");
+    await fill('brief',briefCases[1][0]);await until("document.getElementById('restaurantName').value==='Ember'");
+    await fill('brief',briefCases[2][0]);
+    await click('to-photos');
+    assert.equal(await evaluate("document.getElementById('step-2').hidden"),false);
+    assert.deepEqual(await evaluate("['restaurantName','offer','cta','objective'].map(id=>document.getElementById(id).value)"),briefCases[2][1]);
+  });
+  await test('a free-text brief through photos and export produces a valid MP4', async () => {
+    await storedSession("const req=store.get('fixture');req.onsuccess=()=>{window.__briefPhotos=req.result.photos;};");
+    for(let i=0;i<3;i++){await upload(i,`__briefPhotos[${i}]`);await until(`document.querySelectorAll('.photo-thumb').length===${i+1}`);}
+    await click('to-review');
+    assert.equal(await evaluate("document.getElementById('caption-1').value"),'New tasting menu — new on the menu');
+    await fill('caption-2','Owner scene two');await goStep(1);
+    await fill('brief','We are Juniper. £10 lunch this weekend. Quiet midweek meals. Book a table.');
+    await click('to-photos');await click('to-review');
+    assert.equal(await evaluate("document.getElementById('caption-2').value"),'Owner scene two');
+    assert.equal(await evaluate("document.getElementById('caption-1').value"),'£10 lunch this weekend');
+    await verifyExport(3);
   });
   await test('unsupported MIME choices show a clear message and no broken download', async () => {
     await call('Page.addScriptToEvaluateOnNewDocument', { source: 'if(window.MediaRecorder)MediaRecorder.isTypeSupported=()=>false;' });

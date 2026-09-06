@@ -32,13 +32,16 @@
       <fieldset id="editor">
         <legend class="sr-only">Restaurant promotion video</legend>
         <section id="step-1" class="step-panel" aria-labelledby="brief-heading">
-          <div class="section-heading"><p class="eyebrow">STEP 01 / THE IDEA</p><h2 id="brief-heading" tabindex="-1">What brings people in?</h2><p>Choose a goal and tell us what’s on the menu.</p></div>
+          <div class="section-heading"><p class="eyebrow">STEP 01 / THE IDEA</p><h2 id="brief-heading" tabindex="-1">What brings people in?</h2><p>Tell us who you are, what you’re promoting, and what you want people to do.</p></div>
+          <div class="field"><label for="brief">Your video brief</label><textarea id="brief" name="brief" rows="5" placeholder="We're The Corner Table, a small pizza place in Shoreditch. Half price pints every Tuesday until 6. Want more people in on quiet weeknights." aria-describedby="brief-help"></textarea><small id="brief-help">Write freely. Local text rules pick out a starting plan; check and correct it below.</small></div>
+          <section class="understood" aria-labelledby="understood-heading"><h3 id="understood-heading">Here's what we understood</h3><p class="help">Correct anything we missed. Your corrections stay when you change the brief.</p>
           <div class="brief-grid">
             <div class="field"><label for="restaurantName">Restaurant name <span>Required</span></label><input id="restaurantName" name="restaurantName" maxlength="30" required placeholder="e.g. The Corner Table" aria-describedby="name-hint"><small id="name-hint">Up to 30 characters.</small></div>
-            <div class="field"><label for="objective">Promotion objective <span>Required</span></label><select id="objective" name="objective" required><option value="obj-offer">Special Offer</option><option value="obj-new">New Dish Launch</option><option value="obj-quiet">Quiet Hours Special</option><option value="obj-new-guest">First-Time Diner Deal</option></select></div>
+            <div class="field"><p>Promotion objective: <strong id="objective-label">Special Offer</strong></p><button id="change-objective" class="secondary" type="button" aria-expanded="false" aria-controls="objective-edit">Change objective</button><div id="objective-edit" hidden><label for="objective">Promotion objective <span>Required</span></label><select id="objective" name="objective" required><option value="obj-offer">Special Offer</option><option value="obj-new">New Dish Launch</option><option value="obj-quiet">Quiet Hours Special</option><option value="obj-new-guest">First-Time Diner Deal</option></select></div></div>
             <div class="field"><label for="offer">Offer / details <span>Required</span></label><input id="offer" name="offer" maxlength="40" required placeholder="e.g. two-for-one wood-fired pizza" aria-describedby="offer-hint"><small id="offer-hint">Up to 40 characters. Short phrases work best.</small></div>
             <div class="field"><label for="cta">Call to action <span>Required</span></label><input id="cta" name="cta" maxlength="25" required placeholder="e.g. Book your table today" aria-describedby="cta-hint"><small id="cta-hint">Up to 25 characters. This appears on the end card.</small></div>
           </div>
+          </section>
           <div class="panel-actions"><span>Vertical video · 720 × 1280 · 15 seconds</span><button type="button" class="primary" id="to-photos">Choose photos <span aria-hidden="true">→</span></button></div>
         </section>
         <section id="step-2" class="step-panel" aria-labelledby="photos-heading" hidden>
