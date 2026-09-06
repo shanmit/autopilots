@@ -1361,3 +1361,16 @@ function analyzeBrief(text) {
   renderPhotoSlots();
   const storageReady = initializeAutosave();
 })();
+
+// Optional hosted-app enhancement: never await registration in the builder.
+(async () => {
+  try {
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost') return;
+    // file:// manifest requests cause browser CORS errors; activate this link only when hosted.
+    const manifest = document.getElementById('app-manifest');
+    manifest.href = manifest.dataset.href;
+    if ('serviceWorker' in navigator) {
+      await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    }
+  } catch { /* Storage restrictions or failed installation must not affect editing. */ }
+})();

@@ -1,0 +1,9 @@
+{
+  "name": "AutoPilots — Restaurant video builder",
+  "short_name": "AutoPilots",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f5ef",
+  "theme_color": "#b83b28"
+}

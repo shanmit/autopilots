@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; media-src blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; media-src blob:; connect-src 'none'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
   <title>AutoPilots — Restaurant video builder</title>
+  <link id="app-manifest" rel="manifest" data-href="manifest.json">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
 </head>
 <body>
   <header class="app-header">
     <a class="brand" href="index.html" aria-label="AutoPilots home">AutoPilots<span class="brand-dot" aria-hidden="true">●</span></a>
-    <span class="privacy-badge">Private by design · Works offline</span>
+    <span class="privacy-badge">Private by design · Works offline after first visit</span>
   </header>
   <main class="app-shell">
     <div class="intro">

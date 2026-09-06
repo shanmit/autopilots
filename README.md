@@ -1,6 +1,6 @@
 # AutoPilots restaurant promotion video builder
 
-A complete, browser-only restaurant video builder with an optional local soundtrack. Plain HTML, CSS, and JavaScript; no backend, framework, build step, dependencies, paid API, or external requests. Your photos and audio are decoded and rendered locally. The app does not analyze photo or audio content.
+A complete, browser-only restaurant video builder with an optional local soundtrack. Plain HTML, CSS, and JavaScript; no backend, framework, build step, dependencies, paid API, or third-party requests. Hosted builds request their own app shell and service worker only. Your photos and audio are decoded and rendered locally. The app does not analyze photo or audio content.
 
 ## Preview locally
 
@@ -60,6 +60,18 @@ Motion is urgent when the offer contains a whole-word urgency cue (`today`, `ton
 
 The previous AutoPilots landing page is preserved as `landing.html`, with its styles retained in `styles.css`.
 
+## Hosted offline app
+
+Once this change is deployed, HTTPS builds cache the app shell after a successful first online visit. The badge says **Works offline after first visit**: initial loading and completion of the cache installation require a connection. Offline availability depends on the browser retaining the installed worker and cached files; blocked storage or cleared site data prevents that guarantee. The local `file://` builder still needs neither a server nor a service worker.
+
+`sw.js` precaches the project-relative start URL (`.`), `index.html`, `styles.css`, `app.js`, and `manifest.json`. Only those GET URLs use cache-first lookup with network fallback. The manifest specifies standalone portrait presentation, the app's name and colors, and a relative start URL suitable for `/autopilots/`. No nonexistent icons are referenced. Home-screen installation availability depends on the browser; no install prompt or phone installation was verified.
+
+Registration is asynchronous, guarded to HTTPS or `localhost`, and silently ignores failures. The manifest link is declared in `index.html` and its `href` is activated by `app.js` only on those hosts: an active `file://` manifest link produces Chrome CORS errors. CSP adds only `worker-src 'self'` and `manifest-src 'self'`; `connect-src 'none'` stays in place.
+
+**Updating:** bump `CACHE` in `sw.js` whenever any app-shell file changes, and deploy the worker and shell together. The worker script is checked without the HTTP cache (`updateViaCache: 'none'`); installation fetches the complete new shell with `cache: 'reload'`. Only after successful precaching does it call `skipWaiting`. Activation deletes older `autopilots-` caches and calls `clients.claim`, while preserving unrelated projects' caches on the shared origin. Open editors are not forcibly reloaded; subsequent reloads use the new shell. These lifecycle APIs follow the [Service Workers specification](https://www.w3.org/TR/service-workers/).
+
+**What was verified:** a separate throwaway Chrome 152.0.7977.76 desktop probe served this checkout under a localhost `/autopilots/` path. It verified all five precached URLs and first-visit control; stopped the HTTP server, disabled the browser HTTP cache and emulated offline; loaded both the start URL and `index.html`; and exercised brief analysis and navigation. A simulated v2 worker activated with the tab still open, removed v1, preserved an unrelated cache, and served updated app bytes despite long-lived HTTP caching. The v2 shell also loaded with the server stopped. The probe exited 0 with no browser errors. This did **not** verify the unpushed change on GitHub Pages, offline video generation over HTTP, a real iPhone or Android, or Add to Home Screen. The full export suite below remains a `file://` test.
+
 ## Run the real browser tests
 
 Requirements: Node.js 18 or newer and an already installed Chrome or Chromium browser. No npm install and no downloaded packages are required. From this directory, run:
@@ -74,6 +86,7 @@ Allow roughly two to three minutes. A temporary, isolated browser profile is use
 
 The harness drives the actual app through Chrome DevTools Protocol and native input events, invokes the real canvas capture and MediaRecorder APIs, and tests:
 
+- No service-worker registration or manifest request on `file://`, including a registration spy; CSP worker/manifest permissions with connections still blocked; valid linked manifest fields and existence checks for any declared icon files.
 - Twelve realistic free-text analyzer examples, empty/unparseable input, deterministic results, length caps and source wording; live interpretation and protected corrections; raw-brief restore and correction flags; immediate navigation flushing pending analysis; and a full free-text-to-MP4 flow.
 - Required derived brief fields and objective; fewer than three photos; missing required slots even when optional photos are present.
 - Exact invalid-type and oversized-file errors, the 5MB boundary, corrupt images, and successful JPEG/PNG/WebP decoding.
@@ -101,23 +114,23 @@ Every check prints PASS or the failing assertion. The process exits nonzero on f
 The completed run in Chrome 152.0.7977.76 reported:
 
 ```text
-PASS: 55/55 tests; 8 complete real-time video exports (3 with soundtrack audio); zero external network requests; zero browser errors.
+PASS: 58/58 tests; 8 complete real-time video exports (3 with soundtrack audio); zero external network requests; zero browser errors.
 ```
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 8,225,253 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.003s | 6 |
-| 4 | none | 8,105,378 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.003s | 15.018s | 7 |
-| 5 | none | 8,393,577 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.016s | 6 |
-| 5 | Sunny (built-in) | 8,574,286 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.003s | 6 |
-| 5 | Uploaded 4s WAV | 8,519,954 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.018s | 6 |
-| 5 | Uploaded WAV, restored session | 8,544,842 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.002s | 6 |
-| 3 | none, IndexedDB blocked | 8,199,266 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.008s | 6 |
-| 3 | none, free-text brief | 8,346,024 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.007s | 5 |
+| 3 | none | 8,225,863 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.004s | 15.003s | 6 |
+| 4 | none | 8,083,883 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.005s | 15.003s | 7 |
+| 5 | none | 8,388,767 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.014s | 6 |
+| 5 | Sunny (built-in) | 8,578,003 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.007s | 6 |
+| 5 | Uploaded 4s WAV | 8,562,237 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.004s | 6 |
+| 5 | Uploaded WAV, restored session | 8,586,650 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.017s | 6 |
+| 3 | none, IndexedDB blocked | 8,207,405 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.010s | 6 |
+| 3 | none, free-text brief | 8,323,853 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.006s | 5 |
 
 All eight downloaded files decoded at 720 × 1280, had `.mp4` extensions, and contained an `ftyp` signature. The table reports recorder MIME at startup; final blob MIME was `video/mp4;codecs=avc1.42001f` for silent exports and `video/mp4;codecs=avc1.42001f,mp4a.40.2` for all three soundtrack exports. All three soundtrack files contained `mp4a` and `esds` markers, with no Opus in their recorder MIME.
 
-The Sunny export's decoded audio was nonsilent over 1–13s and faded below 20% of that RMS in the final 0.25s. The uploaded-WAV export had nonsilent audio at 6s and 13s, proving the 4-second source looped. All five silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; 6,838 matched the settled caption positions. The isolated numeric-lockup comparison measured a mean RGB pixel distance of 16.233; urgent versus calm motion measured 18.197. Repeating the same input and timestamp produced a pixel distance of exactly zero. At 390×844, the measured photo slot stayed 554.734375px tall before and after upload, with its preview area unchanged at 203.859375px. File sizes and precise frame timings vary between runs.
+The Sunny export's decoded audio was nonsilent over 1–13s and faded below 20% of that RMS in the final 0.25s. The uploaded-WAV export had nonsilent audio at 6s and 13s, proving the 4-second source looped. All five silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; 6,838 matched the settled caption positions. The isolated numeric-lockup comparison measured a mean RGB pixel distance of 16.233; urgent versus calm motion measured 18.197. Repeating the same input and timestamp produced a pixel distance of exactly zero. At 390×844, the measured photo slot stayed 565.984375px tall before and after upload, with its preview area unchanged at 215.109375px. File sizes and precise frame timings vary between runs.
 
 ## Rendering and timing
 

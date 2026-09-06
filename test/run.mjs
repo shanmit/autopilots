@@ -130,6 +130,10 @@ try {
   call = (method, params) => send(method, params, sessionId);
   for (const domain of ['Page', 'Runtime', 'Network', 'Log']) await call(domain + '.enable');
   await call('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.__swRegistrations = 0;
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: {
+      register() { window.__swRegistrations++; throw new Error('Unexpected file service worker registration'); }
+    } });
     window.__test = {urls: [], revoked: [], recordings: [], tracks: []};
     const create = URL.createObjectURL.bind(URL);
     URL.createObjectURL = blob => {const url=create(blob);__test.urls.push({url,size:blob.size,type:blob.type,blob});return url;};
@@ -155,6 +159,28 @@ try {
   await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   await call('Page.navigate', { url: pathToFileURL(path.join(root, 'index.html')).href });
   await until("document.readyState==='complete' && document.querySelectorAll('#photo-slots input').length===5");
+  await test('file app never attempts service worker registration', async () => {
+    assert.equal(await evaluate('location.protocol'), 'file:');
+    assert.equal(await evaluate('__swRegistrations'), 0);
+    assert.equal(await evaluate("document.getElementById('app-manifest').hasAttribute('href')"),false);
+    assert.equal(localResources.some(url=>url.endsWith('/manifest.json')),false);
+    assert.equal(await evaluate("document.getElementById('generate').disabled"), false);
+  });
+  await test('CSP permits same-origin workers and manifests while keeping connections blocked', async () => {
+    const csp=await evaluate(`document.querySelector('meta[http-equiv="Content-Security-Policy"]').content`);
+    assert.ok(csp.split(';').map(s=>s.trim()).includes("worker-src 'self'"));
+    assert.ok(csp.split(';').map(s=>s.trim()).includes("manifest-src 'self'"));
+    assert.ok(csp.split(';').map(s=>s.trim()).includes("connect-src 'none'"));
+  });
+  await test('linked manifest is valid, scoped to the app and references no missing icons', async () => {
+    assert.equal(await evaluate(`document.querySelector('link[rel="manifest"]').dataset.href`),'manifest.json');
+    const manifest=JSON.parse(readFileSync(path.join(root,'manifest.json'),'utf8'));
+    assert.equal(manifest.name,'AutoPilots — Restaurant video builder');
+    assert.equal(manifest.short_name,'AutoPilots');
+    assert.equal(manifest.start_url,'.');assert.equal(manifest.display,'standalone');
+    assert.equal(manifest.orientation,'portrait');assert.equal(manifest.background_color,'#f7f5ef');assert.equal(manifest.theme_color,'#b83b28');
+    for(const icon of manifest.icons || []) assert.ok(existsSync(path.join(root,icon.src)),icon.src);
+  });
   await test('offer parser conservatively captures exact number, time and urgency hints', async () => {
     const cases = [
       ['50% off','50%',null,false], ['$5 pints','$5',null,false], ['£10 lunch','£10',null,false],
