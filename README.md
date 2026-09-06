@@ -19,6 +19,10 @@ The share path is implemented and unit-tested with stubbed Web Share APIs in the
 
 Changing objectives keeps photos in slot order and resets scene captions to the new objective's templates. Existing caption edits survive navigation and photo additions/replacements; removing a photo removes its caption edit. Brief changes update untouched caption defaults, while manually edited scene captions remain yours. Long substituted defaults prefer shorter templates with intact names or offers, then whole-word trimming without dangling articles or prepositions. Your manually edited captions are not rewritten; review defaults before recording. Scene captions may be blank; the brief and final CTA must be nonblank.
 
+**Phone layout:** At widths up to 768px, the review preview appears above the caption fields; desktop retains its two-column layout. Photo cards reserve the same preview area plus filename and Remove rows in both empty and filled states. Long filenames use an ellipsis rather than expanding the card. Phone controls have at least 44×44 CSS-pixel targets, including the scrubber, photo/file controls, and soundtrack radios; radio indicators stay small inside the larger target.
+
+These layout changes are verified in desktop Chrome at a 390×844 CSS-pixel viewport, not on a real phone. The tests compare visual bounding boxes, enumerate visible interactive DOM controls (including recording and result states), and check file-selector button minimum dimensions. Native video-control internals are browser-owned; the test measures the video element, not each internal media-control target. G2/G4 device and owner validation remain outstanding.
+
 Default captions lead with the owner's offer in scene 1 for every objective. If the full opening template exceeds 40 characters, it falls back to the offer itself rather than replacing it with the restaurant name. The first caption is fully visible at t=0; later captions retain their fade and rise, and scene crossfades are unchanged.
 
 | Objective | Opening template | Scene 3 micro-CTA |
@@ -50,6 +54,7 @@ The harness drives the actual app through Chrome DevTools Protocol and native in
 - Exact invalid-type and oversized-file errors, the 5MB boundary, corrupt images, and successful JPEG/PNG/WebP decoding.
 - Every objective leads with the offer, including a 40-character offer; a pixel comparison confirms the opening caption is opaque at t=0 and matches the settled caption position at t=0.5.
 - All objective-specific slots and default captions; scene/CTA length enforcement; literal handling of markup-like user text.
+- At 390×844, preview-before-captions visual order, at least 44×44 CSS-pixel control targets, and unchanged photo-slot/preview height after upload and removal.
 - Every step at 320, 480, 768, and 1280 pixels without horizontal overflow; associated control labels and a visible keyboard focus outline.
 - Preview animation, pause, scrubbing, cancellation, disabled conflicting controls, and release of capture tracks.
 - Five separate full recordings: silent exports with three, four, and five photos (including re-generation and object URL revocation), plus two five-photo exports with audio — one built-in track and one uploaded synthetic WAV.
@@ -69,20 +74,20 @@ Every check prints PASS or the failing assertion. The process exits nonzero on f
 The completed run in Chrome 152.0.7977.76 reported:
 
 ```text
-PASS: 33/33 tests; 5 complete real-time video exports (2 with soundtrack audio); zero external network requests; zero browser errors.
+PASS: 36/36 tests; 5 complete real-time video exports (2 with soundtrack audio); zero external network requests; zero browser errors.
 ```
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 8,598,260 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.008s | 6 |
-| 4 | none | 8,216,874 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.004s | 15.002s | 6 |
-| 5 | none | 8,461,937 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.014s | 7 |
-| 5 | Sunny (built-in) | 8,627,746 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.014s | 7 |
-| 5 | Uploaded 4s WAV | 8,632,459 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.000s | 15.016s | 7 |
+| 3 | none | 8,601,614 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.013s | 6 |
+| 4 | none | 8,208,919 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.017s | 6 |
+| 5 | none | 8,450,374 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.012s | 7 |
+| 5 | Sunny (built-in) | 8,640,194 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.002s | 15.012s | 7 |
+| 5 | Uploaded 4s WAV | 8,633,890 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.014s | 7 |
 
 All five downloaded files decoded at 720 × 1280, had `.mp4` extensions, and contained an `ftyp` signature. The table reports recorder MIME at startup; final blob MIME was `video/mp4;codecs=avc1.42001f` for silent exports and `video/mp4;codecs=avc1.42001f,mp4a.40.2` for both soundtrack exports. Both soundtrack files contained `mp4a` and `esds` markers, with no Opus in their recorder MIME.
 
-The Sunny export's decoded audio ran 14.976s with mid RMS 0.1781 (1–13s) falling to tail RMS 0.01814 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.976s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All three silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; all 6,839 matched the settled caption positions. File sizes and precise frame timings vary between runs.
+The Sunny export's decoded audio ran 14.976s with mid RMS 0.1784 (1–13s) falling to tail RMS 0.01843 in the final 0.25s (fade-out evidence); the uploaded-WAV export's decoded audio ran 14.997s with RMS 0.2942 at both 6s and 13s, proving the 4-second source looped. All three silent recordings carried zero audio tracks at recorder startup; the five-photo silent export was also rejected by `decodeAudioData`. The process exited 0. The first-frame pixel test found 6,839 opaque caption pixels absent from the blank-caption frame; all 6,839 matched the settled caption positions. At 390×844, the measured photo slot stayed 554.734375px tall before and after upload, with its preview area unchanged at 203.859375px. File sizes and precise frame timings vary between runs.
 
 ## Rendering and timing
 

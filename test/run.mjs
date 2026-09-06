@@ -211,6 +211,22 @@ try {
       __syntheticPhotos.push(new File([blob],'synthetic-test-'+(i+1)+'.'+type.split('/')[1],{type:blob.type}));
     }
   })()`);
+  await test('phone photo slots keep the same height from empty to filled', async () => {
+    await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    const sizes = () => evaluate("[...document.querySelectorAll('.photo-slot')].map(n=>({height:n.getBoundingClientRect().height,preview:n.querySelector('.photo-placeholder,.photo-thumb').getBoundingClientRect().height}))");
+    const empty = await sizes();
+    await upload(0, '__syntheticPhotos[0]');
+    await until("document.querySelectorAll('.photo-thumb').length===1");
+    const filled = await sizes();
+    for (let i=0;i<empty.length;i++) {
+      assert.ok(Math.abs(empty[i].height-filled[i].height)<0.5, `slot ${i+1} height changed: ${JSON.stringify({empty:empty[i],filled:filled[i]})}`);
+      assert.ok(Math.abs(empty[i].preview-filled[i].preview)<0.5, `slot ${i+1} preview height changed`);
+    }
+    console.log('  Phone slot height: ' + JSON.stringify({empty:empty[0],filled:filled[0]}));
+    await evaluate("document.querySelector('.photo-slot .secondary').click()");
+    assert.deepEqual(await sizes(),empty);
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+  });
   await test('JPEG, PNG, and WebP decode into real photo previews', async () => {
     for (let i = 0; i < 3; i++) {
       await upload(i, `__syntheticPhotos[${i}]`);
@@ -354,6 +370,37 @@ try {
     writeFileSync(path.join(tmpdir(), 'autopilots-mobile.png'), Buffer.from(mobile.data, 'base64'));
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   });
+  async function assertPhoneTargets() {
+    await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    const small = await evaluate(`(() => {
+      const controls=[...document.querySelectorAll('button,input:not([type="hidden"]),select,textarea,a[href],[role="button"],[role="slider"],[tabindex]:not([tabindex="-1"]),video[controls]')];
+      return controls.flatMap(n=>{
+        const r=n.getBoundingClientRect();
+        if(!r.width||!r.height||getComputedStyle(n).visibility==='hidden')return [];
+        const failures=[];
+        if(r.width<44||r.height<44)failures.push({control:n.id||n.outerHTML.slice(0,120),width:r.width,height:r.height});
+        // File selector buttons live in the browser's shadow tree; verify their computed minimum too.
+        if(n.matches('input[type="file"]')) {
+          const style=getComputedStyle(n,'::file-selector-button');
+          if(parseFloat(style.minHeight)<44||parseFloat(style.minWidth)<44)failures.push({control:n.id,pseudo:'file-selector-button',minWidth:style.minWidth,minHeight:style.minHeight});
+        }
+        return failures;
+      });
+    })()`);
+    assert.deepEqual(small, [], 'phone targets smaller than 44×44 CSS px');
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true, 'phone overflow');
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+  }
+  await test('phone preview is visually above captions; desktop remains side by side', async () => {
+    await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    assert.equal(await evaluate("document.getElementById('preview').getBoundingClientRect().bottom <= document.getElementById('captions').getBoundingClientRect().top"), true);
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+    assert.equal(await evaluate("document.getElementById('preview').getBoundingClientRect().left > document.getElementById('captions').getBoundingClientRect().right"), true);
+  });
+  await test('all rendered phone controls have 44×44 targets across the flow', async () => {
+    for(const step of [1,2,3]) { await goStep(step); await assertPhoneTargets(); }
+    await selectMusic('music-upload'); await assertPhoneTargets(); await selectMusic('none');
+  });
   await test('preview animates and supports pause and scrubbing', async () => {
     await click('play-preview'); await delay(350);
     assert.ok(await evaluate("Number(document.getElementById('preview-time').value)") > .1);
@@ -367,6 +414,7 @@ try {
   await test('cancel stops recording, releases tracks, and restores controls', async () => {
     await click('generate'); await delay(500);
     assert.equal(await evaluate("document.getElementById('editor').disabled && [...document.querySelectorAll('[data-step]')].every(b=>b.disabled)"), true);
+    await assertPhoneTargets();
     await click('cancel');
     await until("document.getElementById('status').textContent.startsWith('Recording cancelled')");
     assert.equal(await evaluate("__test.tracks.every(t=>t.readyState==='ended') && !document.getElementById('editor').disabled && document.getElementById('result').hidden"), true);
@@ -514,6 +562,7 @@ try {
   });
   await test('supported file sharing shows Share and sends the real export File', async () => {
     assert.equal(await evaluate("document.getElementById('share-video').hidden"), false);
+    await assertPhoneTargets();
     assert.equal(await evaluate("document.getElementById('share-guidance').hidden"), true);
     await click('share-video');
     await until("!document.getElementById('share-video').disabled");
