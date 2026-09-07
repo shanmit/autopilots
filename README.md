@@ -68,9 +68,15 @@ Once this change is deployed, HTTPS builds cache the app shell after a successfu
 
 Registration is asynchronous, guarded to HTTPS or `localhost`, and silently ignores failures. The manifest link is declared in `index.html` and its `href` is activated by `app.js` only on those hosts: an active `file://` manifest link produces Chrome CORS errors. CSP adds only `worker-src 'self'` and `manifest-src 'self'`; `connect-src 'none'` stays in place.
 
-**Updating:** bump `CACHE` in `sw.js` whenever any app-shell file changes, and deploy the worker and shell together. The worker script is checked without the HTTP cache (`updateViaCache: 'none'`); installation fetches the complete new shell with `cache: 'reload'`. Only after successful precaching does it call `skipWaiting`. Activation deletes older `autopilots-` caches and calls `clients.claim`, while preserving unrelated projects' caches on the shared origin. Open editors are not forcibly reloaded; subsequent reloads use the new shell. These lifecycle APIs follow the [Service Workers specification](https://www.w3.org/TR/service-workers/).
+**Updating:** no cache version, build step, or worker edit is needed for shell changes. Each cached shell request serves its page's existing generation and revalidates the complete shell in the background using `cache: 'reload'`; concurrent checks share one fetch. Visible pages also request a check every 60 seconds. A successful fetch concatenates the response bodies in the fixed order `.`, `index.html`, `styles.css`, `app.js`, `manifest.json`, computes SHA-256, and stores all five responses under `autopilots-<full SHA-256 hex>`. Identical bodies produce the same name. A generation becomes available only after all responses have been stored; offline or incomplete fetches leave the existing shell available.
 
-**What was verified:** a separate throwaway Chrome 152.0.7977.76 desktop probe served this checkout under a localhost `/autopilots/` path. It verified all five precached URLs and first-visit control; stopped the HTTP server, disabled the browser HTTP cache and emulated offline; loaded both the start URL and `index.html`; and exercised brief analysis and navigation. A simulated v2 worker activated with the tab still open, removed v1, preserved an unrelated cache, and served updated app bytes despite long-lived HTTP caching. The v2 shell also loaded with the server stopped. The probe exited 0 with no browser errors. This did **not** verify the unpushed change on GitHub Pages, offline video generation over HTTP, a real iPhone or Android, or Add to Home Screen. The full export suite below remains a `file://` test.
+An `autopilots-state` metadata cache records the latest complete generation and each open page's assigned generation. These assignments survive worker termination, so requests in an open editor continue using the same assets. New navigation uses the latest completed generation known at navigation time. A cached reload may discover new content in the background; **A new version is ready — Reload** then lets the owner choose another reload to use it. This notice is hidden throughout recording and shown after recording ends or is cancelled. The reload button flushes autosave before navigating. Nothing forces a reload or changes an open page's assets during a recording.
+
+Cleanup removes unused `autopilots-` caches only. It retains the latest shell, metadata, and generations needed by open pages; recently navigated clients get a one-minute grace period before removal. Unrelated caches on the shared GitHub Pages origin are untouched. `skipWaiting` and `clients.claim` still install worker-code updates promptly, but existing page assignments are preserved, including migration from the former manual-version cache.
+
+**What was verified:** the checked-in localhost probe in `test/run.mjs` serves a disposable copy under `/autopilots/` in Chrome 152.0.7977.76. It compares the browser cache name with an independent Node SHA-256 of the on-disk shell; modifies copied `app.js` and `styles.css` while checking that `sw.js` remains byte-identical; verifies revalidation, owner-controlled reload, and unchanged assets in the open page; stops the server and disables the HTTP cache to test offline navigation; triggers a new update during an actual recording; and restarts the worker to test persisted page assignments. It also checks hash stability and cleanup of an unused app cache while unrelated caches remain. No repository file is modified by the probe.
+
+This does **not** verify the unpushed change on GitHub Pages, offline video generation over HTTP, a real iPhone or Android, or Add to Home Screen. The eight complete video exports remain `file://` tests; the localhost recording is cancelled to verify update deferral.
 
 ## Run the real browser tests
 
@@ -80,12 +86,15 @@ Requirements: Node.js 18 or newer and an already installed Chrome or Chromium br
 node test/run.mjs
 ```
 
+The same localhost probe can be run separately with `node test/run.mjs --sw-probe`. It is also included in the full suite; it needs permission to launch Chrome and listen on localhost.
+
 The harness finds common macOS, Linux, and Windows Chrome paths. If your executable is elsewhere, set `CHROME_PATH` to its full path before running the same command. A sandbox that prohibits Chrome subprocesses must grant the test process permission to launch Chrome; the test fails clearly if it cannot start the browser. The harness never disables Chrome's sandbox.
 
 Allow roughly two to three minutes. A temporary, isolated browser profile is used and removed afterward. The test creates five brightly colored, explicitly labeled **SYNTHETIC TEST IMAGES — NOT RESTAURANT PHOTOS** in browser memory; no real restaurant assets are supplied or downloaded. Temporary screenshots are written to `autopilots-desktop.png` and `autopilots-mobile.png` in the operating system's temporary directory.
 
 The harness drives the actual app through Chrome DevTools Protocol and native input events, invokes the real canvas capture and MediaRecorder APIs, and tests:
 
+- Localhost runtime hashes, on-disk shell changes without editing the worker, cache-stable open pages, owner-controlled updates, offline reloads with the server stopped, recording deferral, unrelated-cache preservation, and worker restart.
 - No service-worker registration or manifest request on `file://`, including a registration spy; CSP worker/manifest permissions with connections still blocked; valid linked manifest fields and existence checks for any declared icon files.
 - Twelve realistic free-text analyzer examples, empty/unparseable input, deterministic results, length caps and source wording; live interpretation and protected corrections; raw-brief restore and correction flags; immediate navigation flushing pending analysis; and a full free-text-to-MP4 flow.
 - Required derived brief fields and objective; fewer than three photos; missing required slots even when optional photos are present.
@@ -105,7 +114,7 @@ The harness drives the actual app through Chrome DevTools Protocol and native in
 - Stubbed file-sharing support on/off, the shared File’s exact bytes/name/MIME, title/text, silent cancellation, rejection with Download fallback and retry, and conditional iPhone guidance. No native share sheet is opened by these tests.
 - Real IndexedDB save/reload/explicit restore with original media metadata and edited/default captions; video generation after restore; saving during an interrupted recording without persisting recorder state; Start fresh; seven-day expiry; unknown objectives; debounced writes and media removal; quota shedding in the required order without disturbing live media; and a complete fresh export when IndexedDB throws.
 - Safe handling of a recorder startup failure and no supported MIME types.
-- Zero external network requests and zero console/runtime errors throughout the flow. Only `file://` app resources, browser-local `blob:` videos, and Chrome's built-in `data:` media-control icons are allowed. Blob/data resources do not make network requests; HTTP(S), WebSocket, and every other nonlocal scheme fail the check.
+- Zero external network requests and zero console/runtime errors throughout the flow. The original file suite allows only `file://` app resources, browser-local `blob:` videos, and Chrome's built-in `data:` media-control icons. The hosted probe additionally permits its own exact localhost origin. Blob/data resources do not make network requests; Requests outside those sources, including third-party HTTP(S) and WebSocket requests, fail the check.
 
 Every check prints PASS or the failing assertion. The process exits nonzero on failure and prints a final pass/fail summary.
 
@@ -114,19 +123,19 @@ Every check prints PASS or the failing assertion. The process exits nonzero on f
 The completed run in Chrome 152.0.7977.76 reported:
 
 ```text
-PASS: 58/58 tests; 8 complete real-time video exports (3 with soundtrack audio); zero external network requests; zero browser errors.
+PASS: 63/63 tests; 8 complete real-time video exports (3 with soundtrack audio); zero external network requests; zero browser errors.
 ```
 
 | Photos | Soundtrack | Downloaded bytes | Recorder MIME | Audio tracks | Recording wall-clock | Decoded endpoint | Distinct sampled frames |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | none | 8,225,863 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.004s | 15.003s | 6 |
-| 4 | none | 8,083,883 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.005s | 15.003s | 7 |
-| 5 | none | 8,388,767 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.014s | 6 |
-| 5 | Sunny (built-in) | 8,578,003 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.007s | 6 |
-| 5 | Uploaded 4s WAV | 8,562,237 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.004s | 6 |
-| 5 | Uploaded WAV, restored session | 8,586,650 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.017s | 6 |
-| 3 | none, IndexedDB blocked | 8,207,405 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.010s | 6 |
-| 3 | none, free-text brief | 8,323,853 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.006s | 5 |
+| 3 | none | 8,241,326 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.007s | 6 |
+| 4 | none | 8,112,900 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.017s | 7 |
+| 5 | none | 8,387,223 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.013s | 6 |
+| 5 | Sunny (built-in) | 8,556,101 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 14.999s | 6 |
+| 5 | Uploaded 4s WAV | 8,546,022 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.001s | 6 |
+| 5 | Uploaded WAV, restored session | 8,617,454 | `video/mp4;codecs=avc1.42E01E,mp4a.40.2` | 1 | 15.001s | 15.014s | 6 |
+| 3 | none, IndexedDB blocked | 8,104,117 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.001s | 15.003s | 6 |
+| 3 | none, free-text brief | 8,342,168 | `video/mp4;codecs=avc1.42E01E` | 0 | 15.002s | 15.004s | 5 |
 
 All eight downloaded files decoded at 720 × 1280, had `.mp4` extensions, and contained an `ftyp` signature. The table reports recorder MIME at startup; final blob MIME was `video/mp4;codecs=avc1.42001f` for silent exports and `video/mp4;codecs=avc1.42001f,mp4a.40.2` for all three soundtrack exports. All three soundtrack files contained `mp4a` and `esds` markers, with no Opus in their recorder MIME.
 

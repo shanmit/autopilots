@@ -1,5 +1,7 @@
 // Dependency-free integration tests. All pictures below are SYNTHETIC TEST IMAGES.
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -58,7 +60,7 @@ browser.stdio[4].on('data', data => {
     if (message.method === 'Network.requestWillBeSent') {
       const url = message.params.request.url;
       // Blob video URLs and Chrome's built-in data: media-control icons do not use the network.
-      if (url.startsWith('file://') || url.startsWith('blob:') || url.startsWith('data:')) localResources.push(url);
+      if (url.startsWith('file://') || url.startsWith('blob:') || url.startsWith('data:') || (probeOrigin && url.startsWith(probeOrigin + '/'))) localResources.push(url);
       else externalRequests.push(url);
     }
     if (!closing && (message.method === 'Runtime.exceptionThrown' ||
@@ -121,9 +123,116 @@ async function test(name, action) {
   console.log(`PASS ${name}`);
 }
 
+let probeServer;
+let probeOrigin = '';
+let probeDirectory;
+async function hostedProbe() {
+  probeDirectory = mkdtempSync(path.join(tmpdir(), 'autopilots-shell-'));
+  const shellFiles = ['index.html','styles.css','app.js','manifest.json','sw.js'];
+  for (const name of shellFiles) writeFileSync(path.join(probeDirectory,name),readFileSync(path.join(root,name)));
+  const originalWorker = readFileSync(path.join(probeDirectory,'sw.js'),'utf8');
+  function changeShell(version) {
+    writeFileSync(path.join(probeDirectory,'app.js'),readFileSync(path.join(root,'app.js'),'utf8')+'\nwindow.__shellVersion='+JSON.stringify(version)+';');
+    writeFileSync(path.join(probeDirectory,'styles.css'),readFileSync(path.join(root,'styles.css'),'utf8')+`\n:root { --probe-version: ${version}; }`);
+  }
+  function expectedHash() {
+    const hash=createHash('sha256');
+    for(const name of ['index.html','index.html','styles.css','app.js','manifest.json'])hash.update(readFileSync(path.join(probeDirectory,name)));
+    return 'autopilots-'+hash.digest('hex');
+  }
+  let port;
+  async function startServer() {
+    probeServer=createServer((req,res)=>{
+      const name=req.url==='/autopilots/'?'index.html':req.url.replace('/autopilots/','');
+      if(!shellFiles.includes(name)){res.writeHead(404);res.end();return;}
+      res.setHeader('Content-Type',{'index.html':'text/html','styles.css':'text/css','app.js':'text/javascript','sw.js':'text/javascript','manifest.json':'application/manifest+json'}[name]);
+      res.setHeader('Cache-Control','public, max-age=31536000');
+      res.end(readFileSync(path.join(probeDirectory,name)));
+    });
+    await new Promise(resolve=>probeServer.listen(port||0,'localhost',resolve));
+    port=probeServer.address().port;probeOrigin=`http://localhost:${port}`;
+  }
+  async function stopServer() {
+    if(probeServer?.listening){probeServer.closeAllConnections();await new Promise(resolve=>probeServer.close(resolve));}
+  }
+  changeShell('v1');await startServer();
+  const {targetId}=await send('Target.createTarget',{url:'about:blank'});
+  const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
+  call=(method,params)=>send(method,params,sessionId);
+  for(const domain of ['Page','Runtime','Network','Log'])await call(domain+'.enable');
+  const url=probeOrigin+'/autopilots/';
+  const latest=()=>evaluate(`(async()=>{const cache=await caches.open('autopilots-state');const response=await cache.match(new URL('__shell_state__',location.href));return response?(await response.json()).latest:null;})()`);
+  async function waitHash(hash){await until(`(async()=>{const cache=await caches.open('autopilots-state');const response=await cache.match(new URL('__shell_state__',location.href));return response&&(await response.json()).latest===${JSON.stringify(hash)};})()`,15000);}
+  const check=()=>evaluate("navigator.serviceWorker.controller.postMessage({type:'CHECK_UPDATE'})");
+  const v1=expectedHash();
+  await test('localhost runtime SHA-256 matches shell bytes and stays stable without changes',async()=>{
+    await call('Page.navigate',{url});await until("navigator.serviceWorker.controller && window.__shellVersion==='v1'",15000);
+    await waitHash(v1);
+    const manifest=await call('Page.getAppManifest');assert.ok(manifest.data);
+    assert.equal(JSON.parse(manifest.data).start_url,'.');
+    await check();await delay(500);assert.equal(await latest(),v1);
+    console.log('  PROBE stable content cache: '+v1);
+  });
+  let v2;
+  await test('localhost changed shell is discovered with byte-identical sw.js and owner-controlled reload',async()=>{
+    changeShell('v2');v2=expectedHash();assert.notEqual(v2,v1);
+    assert.equal(readFileSync(path.join(probeDirectory,'sw.js'),'utf8'),originalWorker);
+    // A normal reload serves the cached generation, then discovers the changed disk files.
+    await call('Page.reload');await until("window.__shellVersion==='v1'");
+    await waitHash(v2);await check();await until("!document.getElementById('update-notice').hidden");
+    assert.equal(await evaluate('window.__shellVersion'),'v1');
+    // Even a new resource request in the open page must stay on its original generation.
+    await call('Network.setCacheDisabled',{cacheDisabled:true});
+    await evaluate("new Promise(resolve=>{const link=document.createElement('link');link.rel='stylesheet';link.href='styles.css';link.onload=resolve;document.head.append(link);})");
+    assert.equal(await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--probe-version').trim()"),'v1');
+    await click('reload-update');await until("window.__shellVersion==='v2'");
+    assert.equal(await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--probe-version').trim()"),'v2');
+    console.log('  PROBE unchanged sw.js; changed disk shell -> '+v2+'; open page stayed v1 until Reload, then loaded v2');
+  });
+  await test('localhost offline reload serves the complete hashed shell with server stopped',async()=>{
+    await stopServer();
+    await call('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
+    for(const suffix of ['', 'index.html']){
+      await call('Page.navigate',{url:url+suffix});await until("window.__shellVersion==='v2' && document.querySelectorAll('#photo-slots input').length===5");
+      await fill('brief','We are Ember. $5 pints tonight. Come in.');await click('to-photos');
+      assert.equal(await evaluate("document.getElementById('step-2').hidden"),false);
+    }
+    console.log('  PROBE offline start URL and index.html passed; HTTP cache disabled, server stopped');
+    await call('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
+    await startServer();
+  });
+  await test('localhost update notice waits for an actual recording to finish',async()=>{
+    await evaluate(`(async()=>{const c=document.createElement('canvas');c.width=720;c.height=1280;const x=c.getContext('2d');window.__probePhotos=[];for(let i=0;i<3;i++){x.fillStyle=['red','green','blue'][i];x.fillRect(0,0,720,1280);const b=await new Promise(r=>c.toBlob(r,'image/png'));__probePhotos.push(new File([b],'photo'+i+'.png',{type:'image/png'}));}})()`);
+    for(let i=0;i<3;i++){await upload(i,`__probePhotos[${i}]`);await until(`document.querySelectorAll('.photo-thumb').length===${i+1}`);}
+    await click('to-review');await click('generate');await until("!document.getElementById('recording').hidden");
+    changeShell('v3');await check();await waitHash(expectedHash());await delay(200);
+    assert.equal(await evaluate("document.getElementById('update-notice').hidden"),true);
+    assert.equal(await evaluate("document.getElementById('recording').hidden"),false);
+    await click('cancel');await until("document.getElementById('recording').hidden && !document.getElementById('update-notice').hidden");
+    assert.equal(await evaluate('window.__shellVersion'),'v2');
+    console.log('  PROBE update deferred throughout real recording; shown after cancellation without reloading');
+  });
+  await test('localhost cleanup preserves unrelated caches and stable hashes after worker restart',async()=>{
+    await evaluate("(async()=>{await caches.open('another-project-cache');await caches.open('unrelated-origin-metadata');await caches.open('autopilots-orphan');})()");
+    await check();await until("(async()=>!(await caches.keys()).includes('autopilots-orphan'))()");
+    const keys=await evaluate('caches.keys()');assert.ok(keys.includes('another-project-cache'));assert.ok(keys.includes('unrelated-origin-metadata'));
+    // Stop the worker, not the page: persisted client pins must survive worker eviction.
+    await call('ServiceWorker.enable');await call('ServiceWorker.stopAllWorkers');
+    await evaluate("new Promise(resolve=>{const link=document.createElement('link');link.rel='stylesheet';link.href='styles.css';link.onload=resolve;document.head.append(link);})");
+    assert.equal(await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--probe-version').trim()"),'v2');
+    await check();await delay(500);assert.equal(await latest(),expectedHash());
+    assert.equal(readFileSync(path.join(probeDirectory,'sw.js'),'utf8'),originalWorker);
+    assert.deepEqual(externalRequests,[]);assert.deepEqual(browserErrors,[]);
+    console.log('  PROBE unrelated caches retained; persisted page version survives worker restart; unchanged content keeps its hash');
+  });
+  await stopServer();
+  console.log('PASS localhost runtime-cache probe');
+}
+
 try {
   const version = await send('Browser.getVersion');
   console.log(`Browser: ${version.product}; ${version.jsVersion}`);
+  if (!process.argv.includes('--sw-probe')) {
   console.log('Assets: five programmatically generated SYNTHETIC TEST IMAGES (not restaurant photos).');
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
@@ -1038,8 +1147,10 @@ try {
     assert.deepEqual(browserErrors, []);
     assert.ok(localResources.some(url => url.endsWith('/app.js')));
   });
+  }
+  await hostedProbe();
   console.log(`\nPASS: ${passed}/${passed} tests; ${reports.length} complete real-time video exports (${reports.filter(r => r.audioTracks).length} with soundtrack audio); zero external network requests; zero browser errors.`);
-  console.log('Local resources only: file:// app files, blob: in-memory videos, and data: built-in media-control icons.');
+  console.log('Local resources only: file:// app files, blob/data media, and the isolated localhost app-shell probe.');
   console.log('Screenshots: ' + path.join(tmpdir(), 'autopilots-{desktop,mobile}.png'));
   console.log('Video results: ' + JSON.stringify(reports));
 } catch (err) {
@@ -1048,6 +1159,8 @@ try {
   if (browserErrors.length) console.error('Browser errors:', JSON.stringify(browserErrors));
   process.exitCode = 1;
 } finally {
+  if (probeServer?.listening) { probeServer.closeAllConnections(); await new Promise(resolve=>probeServer.close(resolve)); }
+  if (probeDirectory) rmSync(probeDirectory, { recursive: true, force: true });
   closing = true;
   if (!exited) {
     try { await send('Browser.close'); } catch { /* Process may close before the response. */ }

@@ -143,6 +143,32 @@ function analyzeBrief(text) {
   let pendingUploads = 0;
   let previewFrame = 0;
   let recordingJob = null;
+  let updateReady = false;
+  function updateNotice() { $('update-notice').hidden = !updateReady || !!recordingJob; }
+  try {
+    if ((location.protocol === 'https:' || location.hostname === 'localhost') && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', event => {
+        if (event.source === navigator.serviceWorker.controller && event.data?.type === 'UPDATE_READY') {
+          updateReady = true;
+          updateNotice();
+        }
+      });
+      const checkUpdate = () => {
+        try {
+          if (!document.hidden) navigator.serviceWorker.controller?.postMessage({ type: 'CHECK_UPDATE' });
+        } catch { /* The controller may be replaced or storage access revoked. */ }
+      };
+      navigator.serviceWorker.addEventListener('controllerchange', checkUpdate);
+      window.addEventListener('pageshow', checkUpdate);
+      setInterval(checkUpdate, 60000);
+    }
+  } catch { /* Updates remain optional when service workers are unavailable. */ }
+  $('reload-update').addEventListener('click', async () => {
+    if (recordingJob || !updateReady) return;
+    saveSessionNow();
+    await saveQueue;
+    location.reload();
+  });
   let exportUrl = null;
   let shareFile = null;
   let mimeType = '';
@@ -1149,6 +1175,7 @@ function analyzeBrief(text) {
     previewFrame = requestAnimationFrame(tick);
   }
   function setBusy(busy) {
+    updateNotice();
     $('editor').disabled = busy;
     $('restore-session').disabled = busy;
     $('start-fresh').disabled = busy;
